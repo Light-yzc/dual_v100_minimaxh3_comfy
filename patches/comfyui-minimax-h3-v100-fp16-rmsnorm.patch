@@ -1,0 +1,46 @@
+diff --git a/comfy/ldm/minimax/model.py b/comfy/ldm/minimax/model.py
+index bc06288..7eb86fb 100644
+--- a/comfy/ldm/minimax/model.py
++++ b/comfy/ldm/minimax/model.py
+@@ -35,0 +36,8 @@ AUDIO_COND_TIMESTEP = 1.0
++def _safe_fp16_rms_norm(norm, x):
++    """Keep RMSNorm in fp16 while preventing overflow in the square reduction."""
++    if x.dtype != torch.float16:
++        return norm(x)
++    row_scale = x.detach().abs().amax(dim=-1, keepdim=True).clamp_min_(1.0)
++    return norm(x / row_scale)
++
++
+@@ -153,0 +162,8 @@ class Attention(nn.Module):
++            # V100 fp16 can overflow while RMSNorm squares a large q/k value.
++            # Per-head rescaling is mathematically cancelled by RMSNorm and keeps
++            # the entire attention path in fp16.
++            if q.dtype == torch.float16:
++                q_scale = q.detach().abs().amax(dim=-1, keepdim=True).clamp_min_(1.0)
++                k_scale = k.detach().abs().amax(dim=-1, keepdim=True).clamp_min_(1.0)
++                q.div_(q_scale)
++                k.div_(k_scale)
+@@ -166,2 +182,2 @@ class Attention(nn.Module):
+-            q = self.q_norm(q.view(s, self.heads, self.head_dim))
+-            k = self.k_norm(k.view(s, self.heads, self.head_dim))
++            q = _safe_fp16_rms_norm(self.q_norm, q.view(s, self.heads, self.head_dim))
++            k = _safe_fp16_rms_norm(self.k_norm, k.view(s, self.heads, self.head_dim))
+@@ -226,2 +242,2 @@ class RefinerBlock(nn.Module):
+-        x = self.attn(self.norm1(x), transformer_options=transformer_options).add_(x)
+-        return self.mlp(self.norm2(x)).add_(x)
++        x = self.attn(_safe_fp16_rms_norm(self.norm1, x), transformer_options=transformer_options).add_(x)
++        return self.mlp(_safe_fp16_rms_norm(self.norm2, x)).add_(x)
+@@ -242 +258 @@ class TokenRefiner(nn.Module):
+-        return self.final_norm(x)
++        return _safe_fp16_rms_norm(self.final_norm, x)
+@@ -259 +275 @@ class DiTBlock(nn.Module):
+-        h = _mod_scale_shift(self.norm1(x), shift_msa, scale_msa, mod_segments)
++        h = _mod_scale_shift(_safe_fp16_rms_norm(self.norm1, x), shift_msa, scale_msa, mod_segments)
+@@ -261 +277 @@ class DiTBlock(nn.Module):
+-        h = _mod_scale_shift(self.norm2(x), shift_mlp, scale_mlp, mod_segments)
++        h = _mod_scale_shift(_safe_fp16_rms_norm(self.norm2, x), shift_mlp, scale_mlp, mod_segments)
+@@ -282,2 +298,2 @@ class FinalLayer(nn.Module):
+-        hv = (self.norm(x[va:vb]) * (1.0 + scale[vrow]) + shift[vrow]).to(torch.float32)
+-        ha = (self.norm(x[aa:ab]) * (1.0 + scale[arow]) + shift[arow]).to(torch.float32)
++        hv = (_safe_fp16_rms_norm(self.norm, x[va:vb]) * (1.0 + scale[vrow]) + shift[vrow]).to(torch.float32)
++        ha = (_safe_fp16_rms_norm(self.norm, x[aa:ab]) * (1.0 + scale[arow]) + shift[arow]).to(torch.float32)

@@ -1,0 +1,40 @@
+# Python and local environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Models and caches: never upload weights
+models/
+downloads/
+hf-cache/
+cache/
+*.gguf
+*.safetensors
+*.ckpt
+*.bin
+*.pt
+*.pth
+
+# Generated media and telemetry
+output/
+outputs/
+temp/
+input/
+*.mp4
+*.webm
+*.mov
+*.wav
+*.csv
+*.log
+
+# Local configuration
+.env
+extra_model_paths.yaml
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
