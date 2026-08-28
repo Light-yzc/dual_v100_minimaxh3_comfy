@@ -29,6 +29,11 @@ input/
 *.csv
 *.log
 
+# Benchmark/gate output.  This is measurement data, not source: it is
+# reproducible from scripts/ and was previously only excluded incidentally by
+# the suffix rules above, which let result *.json through.
+results/
+
 # Local configuration
 .env
 extra_model_paths.yaml
@@ -38,3 +43,6 @@ extra_model_paths.yaml
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 嵌套的独立 git 仓库，与 H3 推理部署无关
+train_text_enc/

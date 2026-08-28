@@ -1,0 +1,35 @@
+diff --git a/__init__.py b/__init__.py
+--- a/__init__.py
++++ b/__init__.py
+@@ -465,6 +465,7 @@ def _inject_adaln_egrid(new_model, dm, lora, adaln, strength):
+ 
+     new_model.add_wrapper_with_key(
+         comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, "h3turbo", wrap)
++    skipped_tp_blocks = 0
+     for name in adaln:                       # name = "....adaln_proj.linear"
+         a = lora[name + ".lora_A.weight"]
+         # Keep the original tensor object intact.  With NoHostMMap this is a
+@@ -473,10 +474,22 @@ def _inject_adaln_egrid(new_model, dm, lora, adaln, strength):
+         # produce a fresh meta tensor and lose that metadata before first use.
+         b = lora[name + ".lora_B.weight"]
+         key = "diffusion_model." + name.rsplit(".linear", 1)[0]
++        try:
++            base = new_model.get_model_object(key)
++        except (AttributeError, IndexError, KeyError):
++            # Persistent TP replaces all 50 backbone blocks with one proxy.
++            # Their AdaLN deltas run inside each rank-local worker; only the
++            # remaining ComfyUI modules should receive object patches here.
++            if getattr(dm, "h3_tp_enabled", False) and name.startswith("blocks."):
++                skipped_tp_blocks += 1
++                continue
++            raise
+         new_model.add_object_patch(
+             key + ".forward",
+-            _make_adaln_forward(new_model.get_model_object(key), a, b, shared, tt, E,
++            _make_adaln_forward(base, a, b, shared, tt, E,
+                                 strength))
++    if skipped_tp_blocks:
++        print(f"[H3TP] Turbo AdaLN delegated to workers for {skipped_tp_blocks} blocks", flush=True)
+ 
+ 
+ def _add_dbg_wrapper(new_model, dm, tag, mode):

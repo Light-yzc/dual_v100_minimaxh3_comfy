@@ -1,0 +1,27 @@
+{
+  "1": {
+    "class_type": "ClipProjLoader",
+    "inputs": {
+      "clip_name": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+      "type": "auto",
+      "projection": "mmh3-4b-ClipProj-v3.1.safetensors",
+      "device": "cuda:1",
+      "mode": "resident"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A cinematic 5-second chase through a rain-soaked neon market at night: a red motorcycle carrying a courier races between crowded stalls while a translucent holographic drone pursues overhead. The camera starts low behind the motorcycle, rapidly tracks sideways around it, whip-pans through a narrow gap, cranes upward into a fast three-quarter orbit, then pushes toward the courier's face. Strong parallax from umbrellas and hanging signs, splashing puddles, drifting steam, bright wet reflections, continuous complex motion, sharp subject detail, coherent anatomy, no text. Layered audio: roaring engine, rain, tires cutting through puddles, distant crowd, and a rising electronic pulse.",
+      "clip": ["1", 0]
+    }
+  },
+  "3": {
+    "class_type": "StoreMiniMaxH3ConditioningPeer",
+    "inputs": {
+      "conditioning": ["2", 0],
+      "key": "benchmark_4b_q4_complex_832x480_124f_seed2011",
+      "device": "cuda:0"
+    }
+  }
+}

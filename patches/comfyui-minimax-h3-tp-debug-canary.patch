@@ -1,0 +1,37 @@
+diff --git a/__init__.py b/__init__.py
+--- a/__init__.py
++++ b/__init__.py
+@@ -501,13 +501,18 @@ def _add_dbg_wrapper(new_model, dm, tag, mode):
+         if st["n"] < 6:
+             st["n"] += 1
+-            try:
+-                m0 = dm.blocks[0].attn.qkv_proj
+-                owner = type(getattr(m0.forward, "__self__", None)).__name__
+-                has_wf = bool(getattr(m0, "weight_function", None)) or \
+-                    getattr(m0, "weight_lowvram_function", None) is not None
+-            except Exception as e:                       # noqa
+-                owner, has_wf = "err:%s" % e, "?"
++            tp_worker = bool(getattr(dm, "h3_tp_enabled", False))
++            if tp_worker:
++                owner, has_wf = "PersistentH3TPBlocks", "worker_lora"
++            else:
++                try:
++                    m0 = dm.blocks[0].attn.qkv_proj
++                    owner = type(getattr(m0.forward, "__self__", None)).__name__
++                    has_wf = bool(getattr(m0, "weight_function", None)) or \
++                        getattr(m0, "weight_lowvram_function", None) is not None
++                except Exception as e:                   # noqa
++                    owner, has_wf = "err:%s" % e, "?"
+@@ -522,7 +527,10 @@ def _add_dbg_wrapper(new_model, dm, tag, mode):
+             except Exception:
+                 vr = ar = -1.0
+                 dt = "?"
+             tsv = float(ts.flatten()[0]) if ts is not None else -1
+-            if mode == "merge":
++            if tp_worker:
++                canary = ("persistent NCCL TP worker owns the 50-layer LoRA; "
++                          "ComfyUI block hooks are intentionally absent")
++            elif mode == "merge":
+                 canary = (f"qkv_proj.forward_owner={owner} weight_patched={has_wf} "
+                           f"(merge: delta folded into weights; owner is the base "
+                           f"Linear, patch presence => lora ACTIVE)")

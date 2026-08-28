@@ -1,0 +1,25 @@
+{
+  "1": {
+    "class_type": "CLIPLoaderGGUFDynamicVRAMMultiGPU",
+    "inputs": {
+      "clip_name": "qwen3vl-32B-MiniMax-H3-Q2_K.gguf",
+      "type": "minimax",
+      "device": "cuda:1"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 0],
+      "text": "A green glass marble rolls through a shallow line of spilled coffee beans on a cafe counter, morning sunlight and gentle handheld parallax, cinematic close shot, coherent motion, no text."
+    }
+  },
+  "3": {
+    "class_type": "StoreMiniMaxH3ConditioningPeer",
+    "inputs": {
+      "conditioning": ["2", 0],
+      "key": "q2_trace_conditioning",
+      "device": "cuda:0"
+    }
+  }
+}

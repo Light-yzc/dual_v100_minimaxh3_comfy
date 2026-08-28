@@ -15,13 +15,29 @@
     "inputs": {"samples": ["1", 0], "vae": ["2", 0]}
   },
   "4": {
-    "class_type": "CreateVideo",
-    "inputs": {"images": ["3", 0], "fps": 24.0, "bit_depth": 8}
+    "class_type": "VAELoaderMultiGPU",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors",
+      "device": "cuda:1"
+    }
   },
   "5": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {"samples": ["1", 0], "vae": ["4", 0]}
+  },
+  "6": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": ["3", 0],
+      "audio": ["5", 0],
+      "fps": 24.0,
+      "bit_depth": 8
+    }
+  },
+  "7": {
     "class_type": "SaveVideo",
     "inputs": {
-      "video": ["4", 0],
+      "video": ["6", 0],
       "filename_prefix": "video/MiniMax_H3_dual_v100_turbo_5s_832x480",
       "format": "auto",
       "codec": "auto"

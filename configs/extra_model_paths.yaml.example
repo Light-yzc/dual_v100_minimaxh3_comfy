@@ -1,6 +1,11 @@
 minimax_h3_models:
-  base_path: /data/minimax-h3-models
+  base_path: /mnt/GALAX/minimax-h3/models
   diffusion_models: diffusion_models
-  text_encoders: text_encoders
-  vae: vae
+  text_encoders: |
+    text_encoders
+    ../experimental/qwen3vl_q4
+  clip_projections: clip_projections
+  vae: |
+    vae
+    ../experimental/vae_int8
   loras: loras

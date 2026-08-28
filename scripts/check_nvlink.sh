@@ -22,6 +22,7 @@ echo "== CUDA peer copy =="
 
 echo "== NCCL all-reduce =="
 NCCL_DEBUG="${NCCL_DEBUG:-INFO}" \
+    NCCL_P2P_LEVEL="${NCCL_P2P_LEVEL:-NVL}" \
     "$PYTHON" -m torch.distributed.run \
     --standalone --nproc_per_node=2 \
     "$SCRIPT_DIR/test_nccl.py"

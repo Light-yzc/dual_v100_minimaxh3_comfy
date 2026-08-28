@@ -1,0 +1,13 @@
+{
+  "1": {"class_type": "UnetLoaderGGUFStaticVRAMMultiGPU", "inputs": {"unet_name": "minimax_h3_fl2va_pruned_fp8_Q4_0.gguf", "device": "cuda:0"}},
+  "2": {"class_type": "CLIPLoaderGGUFStaticVRAMMultiGPU", "inputs": {"clip_name": "qwen3vl-32B-MiniMax-H3-Q2_K.gguf", "type": "minimax", "device": "cuda:1"}},
+  "4": {"class_type": "VAELoaderMultiGPU", "inputs": {"vae_name": "pixel_space", "device": "cuda:1"}},
+  "5": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {"clip": ["2", 0], "vae": ["4", 0], "prompt": "A cinematic close shot of a red ball rolling slowly across a wooden table, soft studio lighting, stable camera, coherent motion, no text.", "width": 448, "height": 256, "length": 22}},
+  "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": 1001}},
+  "16": {"class_type": "MiniMaxH3TurboSampler", "inputs": {}},
+  "7": {"class_type": "BasicGuider", "inputs": {"model": ["1", 0], "conditioning": ["5", 0]}},
+  "9": {"class_type": "BasicScheduler", "inputs": {"model": ["1", 0], "scheduler": "simple", "steps": 1, "denoise": 1.0}},
+  "10": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["6", 0], "guider": ["7", 0], "sampler": ["16", 0], "sigmas": ["9", 0], "latent_image": ["18", 0]}},
+  "18": {"class_type": "EmptyMiniMaxH3LatentAV", "inputs": {"width": 448, "height": 256, "length": 22}},
+  "19": {"class_type": "SaveMiniMaxH3Latent", "inputs": {"samples": ["10", 0], "filename": "./output/h3_static_smoke_448x256_base_latent.pt"}}
+}

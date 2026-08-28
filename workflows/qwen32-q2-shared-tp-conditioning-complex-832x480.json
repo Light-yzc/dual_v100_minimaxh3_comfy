@@ -1,0 +1,37 @@
+{
+  "1": {
+    "class_type": "MiniMaxH3DualRuntimeLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_fp8_Q4_0.gguf",
+      "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors",
+      "qwen_name": "qwen3vl-32B-MiniMax-H3-Q2_K.gguf",
+      "strength": 1.0,
+      "staging_mib": 4,
+      "chunk_rows": 2048
+    }
+  },
+  "2": {
+    "class_type": "Qwen32BQ2TPCLIPLoader",
+    "inputs": {
+      "runtime": ["1", 0],
+      "residency": "evict",
+      "keep_layers": 0,
+      "cache_dequantized": false
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A high-energy cinematic chase through a rain-soaked neon market at night: a red motorcycle carrying a courier races between crowded stalls while a translucent holographic drone pursues overhead. The camera starts low behind the motorcycle, rapidly tracks sideways around it, whip-pans through a narrow gap, then cranes upward into a fast three-quarter orbit and pushes toward the courier's face; strong parallax from umbrellas and hanging signs, splashing puddles, drifting steam, bright reflections, continuous motion, sharp subject detail, coherent anatomy, no text. Layered audio: roaring engine, rain, tires cutting through puddles, distant crowd, and a rising electronic pulse.",
+      "clip": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "StoreMiniMaxH3ConditioningPeer",
+    "inputs": {
+      "conditioning": ["3", 0],
+      "key": "qwen32_complex_neon_chase_seed_independent",
+      "device": "cuda:0"
+    }
+  }
+}

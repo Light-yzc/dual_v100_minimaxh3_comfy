@@ -1,0 +1,15 @@
+{
+  "1": {"class_type": "ClipProjLoader", "inputs": {"clip_name": "Qwen3VL-4B-Instruct-Q4_K_M.gguf", "type": "auto", "projection": "mmh3-4b-ClipProj-v3.1.safetensors", "device": "cuda:1", "mode": "resident"}},
+  "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "A blue ceramic cup beside a sunny cafe window.", "clip": ["1", 0]}},
+  "3": {"class_type": "UnetLoaderGGUFStaticVRAMMultiGPU", "inputs": {"unet_name": "minimax_h3_fl2va_pruned_fp8_Q4_0.gguf", "device": "cuda:0"}},
+  "4": {"class_type": "BasicGuider", "inputs": {"model": ["11", 0], "conditioning": ["2", 0]}},
+  "5": {"class_type": "BasicScheduler", "inputs": {"model": ["11", 0], "scheduler": "simple", "steps": 4, "denoise": 1.0}},
+  "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": 2011}},
+  "7": {"class_type": "EmptyMiniMaxH3LatentAV", "inputs": {"width": 448, "height": 256, "length": 22}},
+  "8": {"class_type": "MiniMaxH3TurboSampler", "inputs": {}},
+  "9": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["6", 0], "guider": ["4", 0], "sampler": ["8", 0], "sigmas": ["5", 0], "latent_image": ["7", 0]}},
+  "10": {"class_type": "SaveMiniMaxH3Latent", "inputs": {"samples": ["9", 0], "filename": "/home/regen/minimax-h3/ComfyUI/output/benchmarks/group_signature_20260828/full_448x256_22f_4step_seed2011.pt"}},
+  "11": {"class_type": "MiniMaxH3TurboLoRA", "inputs": {"model": ["13", 0], "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors", "strength": 1.0, "low_vram": false}},
+  "12": {"class_type": "MiniMaxH3TensorParallel", "inputs": {"model": ["3", 0], "unet_name": "minimax_h3_fl2va_pruned_fp8_Q4_0.gguf", "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors", "strength": 1.0, "chunk_rows": 2048}},
+  "13": {"class_type": "AdaptiveGroupResidualCacheMiniMaxH3TP", "inputs": {"model": ["12", 0], "enabled": false, "warm_blocks": 8, "num_groups": 4, "metric": "relative_l2", "threshold": 0.0, "max_cache": 2, "reference_mode": "last_full", "collect_block_stats": false, "benchmark_ground_truth": false, "oracle_max_mib": 64, "cache_chunk_rows": 256, "device": "cpu", "feature_mode": "signature", "signature_max_tokens": 2048, "signature_hidden_samples": 32, "signature_aggregation": "max_segment"}}
+}

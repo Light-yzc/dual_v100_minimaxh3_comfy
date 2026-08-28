@@ -1,0 +1,24 @@
+
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "model": "ccproxy/claude-opus-5",
+
+  "provider": {
+    "ccproxy": {
+      "npm": "@ai-sdk/anthropic",
+      "name": "CC Proxy",
+
+      "options": {
+        "baseURL": "https://sub.100xlabs.space/v1",
+        "authToken": "sk-51f3bd05be8f5f1738a5c9554dc865e00501e1f3a877825f4c192c2c3db69ebf"
+      },
+
+      "models": {
+        "claude-opus-5": {
+          "name": "Claude Opus 5"
+        }
+      }
+    }
+  }
+}
