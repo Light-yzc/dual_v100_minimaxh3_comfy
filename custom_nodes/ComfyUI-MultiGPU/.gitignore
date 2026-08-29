@@ -1,0 +1,5 @@
+# Python and IDE
+__pycache__/
+.clinerules
+.vscode
+memory-bank/

@@ -1,9 +1,11 @@
-"""Persistent two-way Q4 Tensor Parallel backbone for MiniMax H3.
+"""Persistent two-way Tensor Parallel backbone for MiniMax H3.
 
 This module contains no ComfyUI node code, so rank 1 can import it as a small
-standalone process.  Both ranks keep only their compressed Q4_0 shards and
-Turbo-LoRA shards resident.  Every block computes local heads/MLP channels and
-uses two FP32 NCCL all-reduces to restore the replicated residual stream.
+standalone process.  The historical Q4_0 route and the official INT8-ConvRot
+route share the same block protocol.  Each rank keeps only its compressed
+matrix shards and Turbo-LoRA shards resident.  Every block computes local
+heads/MLP channels and uses FP32 NCCL all-reduces to restore the replicated
+residual stream.
 
 The implementation is intentionally specialized to the released H3 geometry
 and the two V100-SXM2 cards used by this project.  It never mmaps a model file,
@@ -30,6 +32,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 try:  # Package import in ComfyUI.
     from . import h3_lora_tp as lora_tp
     from . import h3_group_cache_calibration as group_calibration
+    from . import h3_int8_tp as int8_tp
     from . import h3_q4_cache as q4_cache
     from . import h3_q4_tp as q4_tp
     from . import h3_v100_fp32_ops as fp32_ops
@@ -37,6 +40,7 @@ try:  # Package import in ComfyUI.
 except ImportError:  # Standalone rank-1 script import from this directory.
     import h3_lora_tp as lora_tp
     import h3_group_cache_calibration as group_calibration
+    import h3_int8_tp as int8_tp
     import h3_q4_cache as q4_cache
     import h3_q4_tp as q4_tp
     import h3_v100_fp32_ops as fp32_ops
@@ -58,6 +62,55 @@ ADALN_MODALITIES = 3
 ADALN_EXPAND = 6
 FP16_SCALE_TARGET = 32752.0
 MIB = 1 << 20
+
+
+def normalize_weight_format(
+    value: str | None = None,
+    model_path: os.PathLike[str] | str | None = None,
+) -> str:
+    """Return the explicit matrix backend used by the persistent worker.
+
+    ``auto`` is intentionally conservative: safetensors selects the official
+    INT8-ConvRot reader, while GGUF selects the established Q4 reader.  An
+    explicit value is still recorded in startup reports so a stale runtime
+    cannot silently load a different format after a model swap.
+    """
+
+    requested = "auto" if value is None else str(value).strip().lower()
+    requested = requested.replace("-", "_")
+    if requested in {"", "auto", "default"}:
+        suffix = Path(os.fspath(model_path)).suffix.lower() if model_path else ""
+        requested = "int8" if suffix in {".safetensors", ".sft"} else "q4"
+    if requested in {"q4", "q4_0", "gguf"}:
+        return "q4"
+    if requested in {"int8", "int8_convrot", "convrot", "safetensors"}:
+        return "int8_convrot"
+    raise ValueError(
+        "H3 TP weight format must be auto, q4, or int8_convrot; "
+        f"got {value!r}"
+    )
+
+
+def normalize_int8_convrot_path(value: str | None = None) -> str:
+    """Normalize the SM70 INT8-ConvRot arithmetic order.
+
+    ``online`` is the official ConvRot order: rotate activations with the
+    block Hadamard and use the stored INT8 values times FP16 row scales.
+    ``dequant`` is the bounded legacy path: dequantize/rotate each weight in
+    FP32 before the GEMM.  The latter remains available for exact A/B and
+    rollback without changing checkpoint loading.
+    """
+
+    requested = "dequant" if value is None else str(value).strip().lower()
+    requested = requested.replace("-", "_")
+    if requested in {"", "auto", "default", "online", "activation", "rotate"}:
+        return "online" if requested not in {"", "auto", "default"} else "dequant"
+    if requested in {"dequant", "weight", "offline", "legacy", "materialize"}:
+        return "dequant"
+    raise ValueError(
+        "H3_TP_INT8_CONVROT_PATH must be online or dequant; "
+        f"got {value!r}"
+    )
 
 
 def process_memory_stats() -> dict[str, float | None]:
@@ -529,6 +582,24 @@ def _validate_geometry(q4_specs: dict[str, Any]) -> None:
             raise ValueError(f"block {block} H3 geometry mismatch: {actual}")
 
 
+def _validate_int8_geometry(int8_specs: dict[str, Any]) -> None:
+    """Validate the released INT8 checkpoint's four core matrix shapes."""
+
+    expected = {
+        "qkv": (3 * INNER, HIDDEN),
+        "out_proj": (HIDDEN, INNER),
+        "fc1": (2 * FFN, HIDDEN),
+        "fc2": (HIDDEN, FFN),
+    }
+    for block in range(LAYERS):
+        actual = {
+            role: tuple(int(value) for value in int8_specs[core_names(block)[role]]["weight"].shape)
+            for role in expected
+        }
+        if actual != expected:
+            raise ValueError(f"block {block} H3 INT8 geometry mismatch: {actual}")
+
+
 def _load_egrid(path: Path, device: torch.device, staging_bytes: int) -> torch.Tensor:
     name = "silu_t_emb_grid"
     specs, _ = lora_tp.inspect_safetensors(path, {name})
@@ -548,6 +619,7 @@ class H3TPBackbone:
         rank: int,
         device: torch.device | str,
         model_path: os.PathLike[str] | str = DEFAULT_MODEL,
+        weight_format: str | None = "auto",
         lora_path: os.PathLike[str] | str = DEFAULT_LORA,
         egrid_path: os.PathLike[str] | str = DEFAULT_EGRID,
         lora_strength: float = 1.0,
@@ -562,6 +634,14 @@ class H3TPBackbone:
         self.rank = rank
         self.device = torch.device(device)
         self.model_path = Path(model_path)
+        self.weight_format = normalize_weight_format(weight_format, self.model_path)
+        self.int8_convrot_path = (
+            normalize_int8_convrot_path(
+                os.environ.get("H3_TP_INT8_CONVROT_PATH")
+            )
+            if self.weight_format == "int8_convrot"
+            else "n/a"
+        )
         self.lora_path = Path(lora_path)
         self.egrid_path = Path(egrid_path)
         self.lora_strength = float(lora_strength)
@@ -640,7 +720,10 @@ class H3TPBackbone:
             "seconds": time.monotonic() - started,
             "rank": rank,
             "device": str(self.device),
+            "weight_format": self.weight_format,
+            "int8_convrot_path": self.int8_convrot_path,
             "compressed_q4_mib": bytes_by_kind["q4"] / MIB,
+            "compressed_int8_mib": bytes_by_kind.get("int8", 0) / MIB,
             "core_lora_mib": bytes_by_kind["core_lora"] / MIB,
             "adaln_base_mib": bytes_by_kind["adaln_base"] / MIB,
             "adaln_lora_mib": bytes_by_kind["adaln_lora"] / MIB,
@@ -671,6 +754,36 @@ class H3TPBackbone:
         self._te_input_sketch = None
         self._te_input_sketch_meta = None
         del previous
+
+    def release_transient_state(self) -> dict[str, float]:
+        """Drop per-request tensors the shard does not need between forwards.
+
+        Called after the sampler has returned, so the next consumer (VAE decode
+        or a Qwen dequantisation) sees the card without this request's leftovers.
+        Two things are freed:
+
+        * ``_last_snapshot`` -- a full FP32 residual clone when a TE-Speed
+          anchor was captured.  At 720p/243f that is ~800 MiB per rank, and the
+          cache-mode path never clears it.
+        * ``_mod_rows_cache`` -- small (273 KiB at 1 MP) but keyed on sequence
+          length, so it is dead weight the moment the resolution changes.
+
+        Weights, the TE-Speed cache and the Group Cache are deliberately left
+        alone: those have their own residency policies and dropping them here
+        would silently change quality or cost a 34 s shard reload.
+        """
+        freed = 0
+        snapshot = self._last_snapshot
+        if snapshot is not None:
+            freed += snapshot.numel() * snapshot.element_size()
+        self._last_snapshot = None
+        rows = self._mod_rows_cache
+        if rows is not None:
+            freed += rows.numel() * rows.element_size()
+        self._mod_rows_cache = None
+        self._mod_rows_cache_key = None
+        del snapshot, rows
+        return {"freed_mib": freed / MIB}
 
     @torch.inference_mode()
     def _sampled_input_change(self, residual: torch.Tensor) -> dict[str, Any]:
@@ -714,12 +827,28 @@ class H3TPBackbone:
         all_core_names = {
             name for block in range(LAYERS) for name in core_names(block).values()
         }
-        q4_specs, _ = q4_tp.inspect_q4_matrices(self.model_path, all_core_names)
-        _validate_geometry(q4_specs)
         all_dense_names = {
             name for block in range(LAYERS) for name in dense_names(block).values()
         }
-        dense_specs = _inspect_dense_specs(self.model_path, all_dense_names | {"adaln_t_table"})
+        if self.weight_format == "q4":
+            q4_specs, _ = q4_tp.inspect_q4_matrices(self.model_path, all_core_names)
+            _validate_geometry(q4_specs)
+            int8_specs = None
+            int8_metadata = None
+            dense_specs = _inspect_dense_specs(
+                self.model_path, all_dense_names | {"adaln_t_table"}
+            )
+            reader_type = q4_tp.Q4DiskReader
+        else:
+            int8_specs, int8_metadata = int8_tp.inspect_int8_matrices(
+                self.model_path, all_core_names
+            )
+            _validate_int8_geometry(int8_specs)
+            dense_specs, _ = int8_tp.inspect_dense_specs(
+                self.model_path, all_dense_names | {"adaln_t_table"}
+            )
+            q4_specs = None
+            reader_type = int8_tp.Int8DiskReader
 
         all_lora_names = set()
         optional_adaln_names = set()
@@ -738,31 +867,69 @@ class H3TPBackbone:
         q4_by_block: list[dict[str, Any]] = []
         dense_by_block: list[dict[str, torch.Tensor]] = []
         q4_bytes = 0
+        int8_bytes = 0
         adaln_base_bytes = 0
         other_bytes = 0
-        with q4_tp.Q4DiskReader(
-            self.model_path, self.device, self.staging_bytes
-        ) as reader:
+        with reader_type(self.model_path, self.device, self.staging_bytes) as reader:
             for block in range(LAYERS):
                 q4_values = {}
                 for role, name in core_names(block).items():
-                    shard = reader.read_tp_shard(
-                        q4_specs[name], role, self.rank, TP_SIZE
-                    )
+                    if self.weight_format == "q4":
+                        assert q4_specs is not None
+                        shard = reader.read_tp_shard(
+                            q4_specs[name], role, self.rank, TP_SIZE
+                        )
+                    else:
+                        assert int8_specs is not None
+                        # The marker was validated during inspection.  Keep
+                        # its parsed config out of the resident block object;
+                        # only the two rank-local payload tensors are needed
+                        # during forward.
+                        marker_config = int8_metadata["configs"][name]
+                        shard = reader.read_matrix_shard(
+                            int8_specs[name],
+                            role,
+                            self.rank,
+                            TP_SIZE,
+                            convrot=bool(marker_config.get("convrot", True)),
+                            convrot_groupsize=int(
+                                marker_config.get(
+                                    "convrot_groupsize",
+                                    int8_tp.CONVROT_GROUP_SIZE,
+                                )
+                            ),
+                        )
                     q4_values[role] = shard
-                    q4_bytes += shard.raw.numel()
+                    if self.weight_format == "q4":
+                        q4_bytes += shard.raw.numel()
+                    else:
+                        int8_bytes += (
+                            shard.qdata.numel() * shard.qdata.element_size()
+                            + shard.scale.numel() * shard.scale.element_size()
+                        )
                 q4_by_block.append(q4_values)
 
                 values = {}
                 for role, name in dense_names(block).items():
-                    target_dtype = (
-                        torch.float32
-                        if role in {"adaln_weight", "adaln_bias"}
-                        else None
-                    )
-                    values[role] = _read_dense(
-                        reader, dense_specs[name], target_dtype
-                    )
+                    target_dtype = torch.float32 if role in {
+                        "adaln_weight", "adaln_bias"
+                    } else None
+                    if self.weight_format != "q4" and role not in {
+                        "adaln_weight", "adaln_bias"
+                    }:
+                        # V100 has no native BF16 arithmetic.  The official
+                        # INT8 checkpoint leaves the small norm vectors in
+                        # BF16, so keep their numerical values but use FP16
+                        # for the existing SM70 kernels.
+                        target_dtype = torch.float16
+                    if self.weight_format == "q4":
+                        values[role] = _read_dense(
+                            reader, dense_specs[name], target_dtype
+                        )
+                    else:
+                        values[role] = reader.read_full(
+                            dense_specs[name], target_dtype
+                        )
                 dense_by_block.append(values)
                 adaln_base_bytes += (
                     values["adaln_weight"].numel()
@@ -775,9 +942,14 @@ class H3TPBackbone:
                     for role in ("norm1", "norm2", "q_norm", "k_norm")
                 )
                 self._report("base", block + 1, LAYERS)
-            adaln_table = _read_dense(
-                reader, dense_specs["adaln_t_table"], torch.float32
-            )
+            if self.weight_format == "q4":
+                adaln_table = _read_dense(
+                    reader, dense_specs["adaln_t_table"], torch.float32
+                )
+            else:
+                adaln_table = reader.read_full(
+                    dense_specs["adaln_t_table"], torch.float32
+                )
             other_bytes += adaln_table.numel() * adaln_table.element_size()
 
         core_lora_by_block: list[dict[str, Any]] = []
@@ -858,6 +1030,7 @@ class H3TPBackbone:
             )
         return blocks, adaln_table, egrid, {
             "q4": q4_bytes,
+            "int8": int8_bytes,
             "core_lora": core_lora_bytes,
             "adaln_base": adaln_base_bytes,
             "adaln_lora": adaln_lora_bytes,
@@ -914,6 +1087,150 @@ class H3TPBackbone:
                 stages.end(stage_name)
         return output
 
+    def _matrix_input(self, value: torch.Tensor, matrix: Any) -> torch.Tensor:
+        """Prepare an activation for a Q4 or INT8-ConvRot matrix.
+
+        Q4 and the legacy INT8 path consume the ordinary activation basis.  In
+        the online INT8 path, the serialized matrix is kept in its rotated
+        basis, so the activation is rotated before selecting an input-column
+        shard.  Row-parallel shards are aligned to complete 256-element
+        groups; rotating a local shard is therefore identical to rotating the
+        replicated full vector and then slicing it.
+        """
+
+        if self.weight_format != "int8_convrot":
+            return value
+        if not isinstance(matrix, int8_tp.Int8MatrixShard) or not matrix.convrot:
+            return value
+        width = int(value.shape[-1])
+        online = (
+            self.weight_format == "int8_convrot"
+            and self.int8_convrot_path == "online"
+        )
+        if online:
+            if value.dtype not in {torch.float16, torch.bfloat16, torch.float32}:
+                raise ValueError(f"unsupported ConvRot activation dtype {value.dtype}")
+            # The V100 GEMM is FP16.  Cast before the Hadamard so the online
+            # path has the same rounding point as the official SM70 fallback.
+            prepared = value if value.dtype == torch.float16 else value.to(torch.float16)
+        else:
+            prepared = value
+
+        if matrix.kind in {"out_proj", "fc2"}:
+            if width == matrix.in_features:
+                local = prepared
+            elif matrix.full_in_features is not None and width == matrix.full_in_features:
+                if online:
+                    prepared = int8_tp.rotate_activation(
+                        prepared, matrix.convrot_groupsize
+                    )
+                start = matrix.input_start
+                local = prepared[..., start : start + matrix.in_features]
+            else:
+                raise ValueError(
+                    f"{matrix.source_name} activation width {width} does not match "
+                    f"local/full input {matrix.in_features}/{matrix.full_in_features}"
+                )
+        else:
+            if width != matrix.in_features:
+                raise ValueError(
+                    f"{matrix.source_name} activation width {width} does not match "
+                    f"input width {matrix.in_features}"
+                )
+            local = prepared
+
+        if online:
+            # Local row-parallel attention/MLP shards start and end on a
+            # ConvRot group boundary, so the local transform is sufficient.
+            if not (
+                matrix.kind in {"out_proj", "fc2"}
+                and width == matrix.full_in_features
+            ):
+                local = int8_tp.rotate_activation(
+                    local, matrix.convrot_groupsize
+                )
+            return local
+        if local.dtype not in {torch.float16, torch.bfloat16, torch.float32}:
+            raise ValueError(f"unsupported ConvRot activation dtype {local.dtype}")
+        # The SM70 branch uses FP16 Tensor-Core GEMM.  Branch activations are
+        # normally already FP16; the explicit cast only covers the FP32 SwiGLU
+        # reference path and keeps GEMM semantics deterministic.  Do not apply
+        # an online Hadamard here: the weight has already been un-rotated using
+        # FP32 arithmetic during dequantization.
+        if local.dtype != torch.float16:
+            local = local.to(dtype=torch.float16)
+        return local
+
+    def _rotate_activation_inplace(
+        self,
+        value: torch.Tensor,
+        matrix: Any,
+        *,
+        inverse: bool = False,
+    ) -> bool:
+        """Rotate one ConvRot activation in bounded chunks and restore it.
+
+        The straightforward online path returns a second tensor the size of
+        ``value`` from ``rotate_activation``.  At 720p that is roughly
+        700 MiB, and it overlaps the FP32 residual, QKV output, and NCCL
+        buffers.  The caller uses this helper only when the activation is
+        disposable after the GEMM: each 256-wide group is transformed into a
+        small temporary and copied back, then the inverse transform restores
+        the ordinary basis before the LoRA branch reads it.  Returning
+        ``False`` leaves unusual/non-contiguous inputs on the conservative
+        allocating path.
+        """
+
+        if (
+            self.weight_format != "int8_convrot"
+            or self.int8_convrot_path != "online"
+            or not isinstance(matrix, int8_tp.Int8MatrixShard)
+            or not matrix.convrot
+            or value.dtype != torch.float16
+            or not value.is_contiguous()
+        ):
+            return False
+        width = int(value.shape[-1])
+        if width != int(matrix.in_features):
+            return False
+        group_size = int(matrix.convrot_groupsize)
+        if width % group_size:
+            return False
+        try:
+            rows_per_chunk = max(
+                256,
+                int(os.environ.get("H3_TP_INT8_ROTATE_ROWS", "16384")),
+            )
+        except ValueError:
+            rows_per_chunk = 16384
+        flat = value.reshape(-1, width)
+        groups = flat.reshape(-1, width // group_size, group_size)
+        transform = int8_tp.hadamard(
+            group_size,
+            value.device,
+            value.dtype,
+        )
+        if inverse:
+            transform = transform.transpose(0, 1)
+        for start in range(0, groups.shape[0], rows_per_chunk):
+            stop = min(start + rows_per_chunk, groups.shape[0])
+            chunk = groups[start:stop]
+            rotated = torch.matmul(chunk, transform)
+            chunk.copy_(rotated)
+            del rotated
+        return True
+
+    def _dequantize_matrix(
+        self,
+        matrix: Any,
+        dtype: torch.dtype = torch.float16,
+    ) -> torch.Tensor:
+        if self.weight_format == "q4":
+            return q4_tp.dequantize_q4_0(matrix, dtype)
+        if self.int8_convrot_path == "online":
+            return int8_tp.dequantize_int8_w8a16(matrix, dtype)
+        return int8_tp.dequantize_int8(matrix, dtype)
+
     def _column_linear(
         self,
         x: torch.Tensor,
@@ -926,14 +1243,22 @@ class H3TPBackbone:
         if stages is not None:
             stages.begin(f"{stage_prefix}_dequant")
         try:
-            weight = q4_tp.dequantize_q4_0(matrix, torch.float16)
+            weight = self._dequantize_matrix(matrix, torch.float16)
         finally:
             if stages is not None:
                 stages.end(f"{stage_prefix}_dequant")
         if stages is not None:
             stages.begin(f"{stage_prefix}_gemm")
         try:
-            output = functional.linear(x, weight)
+            rotated_in_place = self._rotate_activation_inplace(x, matrix)
+            try:
+                output = functional.linear(
+                    x if rotated_in_place else self._matrix_input(x, matrix),
+                    weight,
+                )
+            finally:
+                if rotated_in_place:
+                    self._rotate_activation_inplace(x, matrix, inverse=True)
         finally:
             if stages is not None:
                 stages.end(f"{stage_prefix}_gemm")
@@ -958,14 +1283,23 @@ class H3TPBackbone:
         if stages is not None:
             stages.begin(f"{stage_prefix}_dequant")
         try:
-            weight = q4_tp.dequantize_q4_0(matrix, torch.float16)
+            weight = self._dequantize_matrix(matrix, torch.float16)
         finally:
             if stages is not None:
                 stages.end(f"{stage_prefix}_dequant")
         if stages is not None:
             stages.begin(f"{stage_prefix}_gemm")
         try:
-            output = torch.mm(x_fp16, weight.t(), out_dtype=torch.float32)
+            rotated_in_place = self._rotate_activation_inplace(x_fp16, matrix)
+            try:
+                output = torch.mm(
+                    x_fp16 if rotated_in_place else self._matrix_input(x_fp16, matrix),
+                    weight.t(),
+                    out_dtype=torch.float32,
+                )
+            finally:
+                if rotated_in_place:
+                    self._rotate_activation_inplace(x_fp16, matrix, inverse=True)
         finally:
             if stages is not None:
                 stages.end(f"{stage_prefix}_gemm")
@@ -987,6 +1321,7 @@ class H3TPBackbone:
         weight: torch.Tensor,
         lora: Any,
         *,
+        matrix: Any | None = None,
         safe: torch.Tensor | None = None,
         scale: torch.Tensor | None = None,
         stages: _CudaStageRecorder | None = None,
@@ -1003,8 +1338,15 @@ class H3TPBackbone:
         if stages is not None:
             stages.begin("fc2_gemm")
         try:
-            output = torch.mm(safe, weight.t(), out_dtype=torch.float32)
+            rotated_in_place = (
+                matrix is not None
+                and self._rotate_activation_inplace(safe, matrix)
+            )
+            gemm_input = safe if matrix is None or rotated_in_place else self._matrix_input(safe, matrix)
+            output = torch.mm(gemm_input, weight.t(), out_dtype=torch.float32)
             output.mul_(scale)
+            if rotated_in_place:
+                self._rotate_activation_inplace(safe, matrix, inverse=True)
         finally:
             if stages is not None:
                 stages.end("fc2_gemm")
@@ -1282,12 +1624,12 @@ class H3TPBackbone:
         stages.end("norm2_modulation")
         stages.begin("fc1_dequant")
         try:
-            fc1_weight = q4_tp.dequantize_q4_0(block.q4["fc1"], torch.float16)
+            fc1_weight = self._dequantize_matrix(block.q4["fc1"], torch.float16)
         finally:
             stages.end("fc1_dequant")
         stages.begin("fc2_dequant")
         try:
-            fc2_weight = q4_tp.dequantize_q4_0(block.q4["fc2"], torch.float16)
+            fc2_weight = self._dequantize_matrix(block.q4["fc2"], torch.float16)
         finally:
             stages.end("fc2_dequant")
         # Do not retain a full [sequence, HIDDEN] FP32 update.  The local FC2
@@ -1307,7 +1649,10 @@ class H3TPBackbone:
                 stop = min(start + self.chunk_rows, group_stop)
                 source = branch[start:stop]
                 stages.begin("fc1_gemm")
-                hidden = functional.linear(source, fc1_weight)
+                hidden = functional.linear(
+                    self._matrix_input(source, block.q4["fc1"]),
+                    fc1_weight,
+                )
                 stages.end("fc1_gemm")
                 self._add_lora_(
                     hidden,
@@ -1334,6 +1679,7 @@ class H3TPBackbone:
                     swiglu,
                     fc2_weight,
                     block.lora["fc2"],
+                    matrix=block.q4["fc2"],
                     safe=safe_swiglu,
                     scale=swiglu_scale,
                     stages=stages,
@@ -2111,6 +2457,14 @@ class H3TPBackbone:
             torch.cuda.synchronize(self.device)
         metrics = {
             "rank": self.rank,
+            "weight_format": self.weight_format,
+            "int8_convrot_path": self.int8_convrot_path,
+            "compute_backend": (
+                "sm70_convrot_w8a16_fp16_tensorcore_"
+                f"{self.int8_convrot_path}"
+                if self.weight_format == "int8_convrot"
+                else "q4_0_dequant_fp16"
+            ),
             "sequence": residual.shape[0],
             "total_ms": total_start.elapsed_time(total_end),
             "collective_ms": sum(
@@ -2217,4 +2571,5 @@ __all__ = [
     "LAYERS",
     "allocate_and_receive_rank1",
     "broadcast_inputs_rank0",
+    "normalize_weight_format",
 ]

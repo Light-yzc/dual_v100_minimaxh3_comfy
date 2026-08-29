@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -25,6 +26,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--init-method", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--weight-format",
+        default="auto",
+        choices=(
+            "auto",
+            "q4",
+            "q4_0",
+            "gguf",
+            "int8",
+            "int8_convrot",
+            "convrot",
+            "safetensors",
+        ),
+    )
     parser.add_argument("--lora", required=True)
     parser.add_argument("--egrid", required=True)
     parser.add_argument("--strength", type=float, default=1.0)
@@ -130,6 +145,7 @@ def main() -> None:
                     rank=1,
                     device=device,
                     model_path=args.model,
+                    weight_format=args.weight_format,
                     lora_path=args.lora,
                     egrid_path=args.egrid,
                     lora_strength=args.strength,
@@ -138,6 +154,41 @@ def main() -> None:
                     progress=progress,
                 )
             emit("h3_ready", backbone.load_stats)
+            continue
+        if name == "release_cache":
+            # Return this rank's free allocator blocks to the driver without
+            # unloading the DiT shard.  After a long forward the caching
+            # allocator holds several GiB of empty segments that the driver
+            # still counts as used, so a later Qwen dequantisation on this card
+            # fails even though the shard itself only needs ~7.5 GiB.  The
+            # shard stays resident: reloading it costs ~34 s.
+            #
+            # Deliberately not collective: the caller may invoke it at any
+            # point between forwards, and pairing it with a barrier would make
+            # a routine cleanup able to deadlock the pipeline.
+            before_reserved = torch.cuda.memory_reserved(device)
+            before_allocated = torch.cuda.memory_allocated(device)
+            # Drop this request's leftovers first.  ``empty_cache`` only returns
+            # *free* segments, so a retained snapshot would keep its segment
+            # allocated and the release would under-deliver by ~800 MiB at 720p.
+            transient = (
+                backbone.release_transient_state() if backbone is not None else None
+            )
+            gc.collect()
+            torch.cuda.synchronize(device)
+            torch.cuda.empty_cache()
+            emit(
+                "release_cache",
+                {
+                    "rank": 1,
+                    "reserved_mib_before": before_reserved / tp.MIB,
+                    "reserved_mib_after": torch.cuda.memory_reserved(device) / tp.MIB,
+                    "allocated_mib": before_allocated / tp.MIB,
+                    "allocated_mib_after": torch.cuda.memory_allocated(device) / tp.MIB,
+                    "transient": transient,
+                    "h3_resident": backbone is not None,
+                },
+            )
             continue
         if name == "qwen_forward":
             qwen = ensure_qwen()
@@ -297,6 +348,20 @@ def main() -> None:
                 "format": h3_q4_cache.Q4_FORMAT,
                 "cache": group_cache.summary(),
             }
+        # Drop this rank's activations *before* reporting memory.  rank1 never
+        # returns its residual to rank0 (only metrics travel back), so once the
+        # stats above are computed the FP32 hidden stream is pure garbage: at
+        # S=68261 that is ~800 MiB of the number this report used to attribute
+        # to steady-state retention.  Whatever the caches genuinely hold is
+        # still counted, because ``te_cache``/``group_cache`` keep their own
+        # references and are unaffected by dropping these local names.
+        #
+        # Only the local names are dropped here.  ``release_transient_state``
+        # deliberately does *not* run per forward: it would clear the
+        # cross-step modulation-row cache every denoise step and pin
+        # ``modulation_rows_cached`` to false.  Snapshot/cache teardown belongs
+        # to the post-sample ``release_cache`` command instead.
+        del residual, t_emb, rope
         metrics["allocated_mib"] = torch.cuda.memory_allocated(device) / tp.MIB
         metrics["reserved_mib"] = torch.cuda.memory_reserved(device) / tp.MIB
         metrics["peak_allocated_mib"] = max(
@@ -306,7 +371,6 @@ def main() -> None:
         if not metrics["finite"]:
             raise RuntimeError("H3 TP rank1 TE-Speed output produced NaN/Inf")
         emit("forward", metrics)
-        del residual, t_emb, rope
 
     dist.destroy_process_group()
 

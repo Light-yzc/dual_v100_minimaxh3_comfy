@@ -1123,6 +1123,27 @@ class H3AsyncVAE:
 
         return mm.intermediate_dtype()
 
+    def decode_output_dtype(self) -> torch.dtype:
+        """Choose the host video canvas dtype without a second full copy.
+
+        ComfyUI's default intermediate dtype is FP32.  A 720p/243-frame
+        ``IMAGE`` canvas is then about 2.56 GiB, and allocating it while the
+        service is under a 7 GiB cgroup high limit can put the process into
+        direct reclaim for minutes.  The decoder writes each finalized tile
+        with ``copy_`` (which safely casts), so an FP16 canvas is sufficient
+        for the 8-bit video output and cuts the live host buffer in half.
+        Keep an explicit escape hatch for numerical A/B checks.
+        """
+        requested = os.environ.get("H3_ASYNC_VAE_OUTPUT_DTYPE", "fp16").strip().lower()
+        if requested in {"fp16", "float16", "half"}:
+            return torch.float16
+        if requested in {"fp32", "float32", "full"}:
+            return torch.float32
+        raise ValueError(
+            "H3_ASYNC_VAE_OUTPUT_DTYPE must be fp16 or fp32, "
+            f"got {requested!r}"
+        )
+
     def spacial_compression_decode(self) -> int:
         return 16
 
@@ -1171,13 +1192,20 @@ class H3AsyncVAE:
         try:
             samples = samples_in.to(device=self.device, dtype=self.vae_dtype)
             shape = self.first_stage_model.decode_output_shape(samples.shape)
-            output = torch.empty(shape, device=self.output_device, dtype=torch.float32)
-            self.first_stage_model.decode(samples, output_buffer=output, **kwargs)
-            return output.to(
+            output = torch.empty(
+                shape,
                 device=self.output_device,
-                dtype=self.vae_output_dtype(),
-                copy=False,
-            ).movedim(1, -1)
+                dtype=self.decode_output_dtype(),
+            )
+            self.first_stage_model.decode(samples, output_buffer=output, **kwargs)
+            # ``output`` is the complete host video canvas.  Return it directly
+            # instead of forcing ComfyUI's intermediate dtype: when that dtype
+            # differs, a full conversion canvas would be live at the same time
+            # and put the process straight back into cgroup reclaim.  IMAGE
+            # consumers accept FP16, and the dtype is explicit/diagnosable
+            # through H3_ASYNC_VAE_OUTPUT_DTYPE (fp16 by default, fp32 for A/B
+            # checks).
+            return output.movedim(1, -1)
         finally:
             self.async_handle._set_state(AsyncVAEState.READY)
 
@@ -1256,13 +1284,47 @@ def get_or_create_async_vae_handle(
     pair = _production_devices(devices)
     if pair is None:
         return None
-    if split is None:
-        raw_split = os.environ.get("H3_VAE_SPLIT", "24").strip().lower()
-        split = 24 if raw_split in {"auto", "balanced", "default"} else int(raw_split)
     if prefetch_limits is None:
         prefetch_limits = _env_prefetch_limits()
     limits = tuple(prefetch_limits)
     resolved = _resolve_no_mmap_path(path)
+
+    # Inspect the header before choosing a split: the two checkpoint routes want
+    # different defaults.  This is a header-only read of a few hundred KiB, not
+    # payload.  The handle re-reads it in its constructor; keeping that
+    # signature unchanged is worth more than saving one header parse.
+    #
+    # Imported here, not at module scope: the adapter imports this module for
+    # its reader/spec/token types, so a top-level import would be circular.
+    try:
+        from . import h3_async_vae_int8 as int8_async
+    except ImportError:
+        from custom_nodes.DualV100 import h3_async_vae_int8 as int8_async
+
+    specs, _metadata = inspect_safetensors(resolved)
+    is_int8 = int8_async.is_int8_convrot_vae(specs)
+
+    if split is None:
+        # A deferred decoder is materialised after the sampler has returned and
+        # is never rebalanced, so it has exactly one layout for its whole life
+        # and that layout should be the decode-optimal one.  Measured at 720p,
+        # 28 tiles/chunk: split=18 decodes in 3540 ms vs 4357 ms at 24 and
+        # 4066 ms at 14, and 18 also balances resident bytes best
+        # (2102/2222 MiB vs 2488/1838).  The FP16 route keeps its historical 24
+        # because that path does rebalance between stages.
+        default_split = 18 if is_int8 else 24
+        raw_split = (
+            os.environ.get("H3_VAE_SPLIT")
+            or os.environ.get("H3_VAE_DECODE_SPLIT")
+            or str(default_split)
+        ).strip().lower()
+        split = (
+            default_split
+            if raw_split in {"", "auto", "balanced", "default"}
+            else int(raw_split)
+        )
+    split = min(int(split), 35)
+
     key = (resolved, str(pair[0]), str(pair[1]), int(split))
     with _HANDLE_CACHE_LOCK:
         cached = _HANDLE_CACHE.get(key)
@@ -1276,6 +1338,18 @@ def get_or_create_async_vae_handle(
         staging_mib = int(os.environ.get("H3_ASYNC_VAE_STAGING_MIB", "4"))
         if not 4 <= staging_mib <= 8:
             raise ValueError("H3_ASYNC_VAE_STAGING_MIB must be between 4 and 8")
+        extra: dict[str, object] = {}
+        if is_int8:
+            # The INT8-ConvRot checkpoint cannot use the FP16 defaults: its
+            # weights are I8 qdata paired with F32 scales and a comfy_quant
+            # marker, and they need mixed_precision_ops rather than
+            # disable_weight_init to host a QuantizedTensor.
+            extra = int8_async.build_int8_async_kwargs(specs, pair)
+            logging.info(
+                "[H3 async VAE] INT8-ConvRot checkpoint detected; decoder "
+                "deferred past the DiT peak, single layout split=%d",
+                int(split),
+            )
         handle = AsyncVAEHandle(
             resolved,
             pair,
@@ -1283,6 +1357,7 @@ def get_or_create_async_vae_handle(
             safety_bytes=safety_bytes,
             staging_bytes=staging_mib * MIB,
             prefetch_limits=limits,
+            **extra,
         )
         _HANDLE_CACHE[key] = handle
         return handle

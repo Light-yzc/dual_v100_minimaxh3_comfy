@@ -1,0 +1,1417 @@
+{
+  "id": "h3-int8-reference_image-832x480",
+  "revision": 0,
+  "last_node_id": 22,
+  "last_link_id": 26,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MiniMaxH3DualRuntimeLoader",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        500,
+        220
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "unet_name"
+          }
+        },
+        {
+          "name": "lora_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "lora_name"
+          }
+        },
+        {
+          "name": "qwen_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "qwen_name"
+          }
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "strength"
+          }
+        },
+        {
+          "name": "staging_mib",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "staging_mib"
+          }
+        },
+        {
+          "name": "chunk_rows",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "chunk_rows"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "runtime",
+          "type": "H3_TP_RUNTIME",
+          "links": [
+            24,
+            25
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3DualRuntimeLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        "qwen3vl-32B-MiniMax-H3-Q2_K.gguf",
+        1.0,
+        4,
+        2048
+      ],
+      "title": "Shared H3/Qwen32 runtime (MP)"
+    },
+    {
+      "id": 2,
+      "type": "UNETLoader",
+      "pos": [
+        40,
+        250
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "unet_name"
+          }
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "weight_dtype"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "MiniMaxH3TensorParallelInt8",
+      "pos": [
+        540,
+        570
+      ],
+      "size": [
+        500,
+        190
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 2
+        },
+        {
+          "name": "runtime",
+          "type": "H3_TP_RUNTIME",
+          "shape": 7,
+          "link": 24
+        },
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "unet_name"
+          }
+        },
+        {
+          "name": "lora_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "lora_name"
+          }
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "strength"
+          }
+        },
+        {
+          "name": "chunk_rows",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "chunk_rows"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3TensorParallelInt8"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        1,
+        2048
+      ],
+      "title": "Q4 model -> persistent 2-way TP"
+    },
+    {
+      "id": 4,
+      "type": "VAELoaderH3Device",
+      "pos": [
+        40,
+        560
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "vae_name"
+          }
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "device"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            3,
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoaderH3Device"
+      },
+      "widgets_values": [
+        "minimax_h3_video_vae_int8_convrot.safetensors",
+        "cuda:0"
+      ],
+      "title": "Video VAE"
+    },
+    {
+      "id": 5,
+      "type": "VAELoaderH3Device",
+      "pos": [
+        40,
+        700
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "vae_name"
+          }
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "device"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoaderH3Device"
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors",
+        "cuda:0"
+      ],
+      "title": "Audio VAE"
+    },
+    {
+      "id": 6,
+      "type": "MiniMaxH3ReferenceKeyframeToVideoTP",
+      "pos": [
+        540,
+        40
+      ],
+      "size": [
+        560,
+        500
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mode",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "mode"
+          }
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 26
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "prompt"
+          }
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "width"
+          }
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "height"
+          }
+        },
+        {
+          "name": "length",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "length"
+          }
+        },
+        {
+          "name": "ref_image_size",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "ref_image_size"
+          }
+        },
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 20,
+          "shape": 7
+        },
+        {
+          "name": "first_frame",
+          "type": "IMAGE",
+          "link": 21,
+          "shape": 7
+        },
+        {
+          "name": "last_frame",
+          "type": "IMAGE",
+          "link": 22,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            6
+          ]
+        },
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ReferenceKeyframeToVideoTP"
+      },
+      "widgets_values": [
+        "reference_image",
+        "Use <Picture 1> as the persistent visual identity and composition reference. Preserve the subject's identity, colors, materials, and key visual details while generating a natural continuous action with coherent camera motion, stable anatomy, realistic lighting and sound, no text.",
+        832,
+        480,
+        124,
+        "match"
+      ],
+      "title": "MODE: reference image OR first + last frame (persistent TP)"
+    },
+    {
+      "id": 7,
+      "type": "BasicGuider",
+      "pos": [
+        1160,
+        40
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 18
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "GUIDER",
+          "type": "GUIDER",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicGuider"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 8,
+      "type": "MiniMaxH3TurboSampler",
+      "pos": [
+        1160,
+        330
+      ],
+      "size": [
+        320,
+        80
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "SAMPLER",
+          "type": "SAMPLER",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3TurboSampler"
+      },
+      "widgets_values": [],
+      "title": "H3 Turbo 4-step sampler"
+    },
+    {
+      "id": 9,
+      "type": "BasicScheduler",
+      "pos": [
+        1160,
+        170
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 19
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "scheduler"
+          }
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "steps"
+          }
+        },
+        {
+          "name": "denoise",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "denoise"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            10
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        4,
+        1
+      ]
+    },
+    {
+      "id": 10,
+      "type": "RandomNoise",
+      "pos": [
+        1160,
+        450
+      ],
+      "size": [
+        320,
+        80
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise_seed",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "noise_seed"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RandomNoise"
+      },
+      "widgets_values": [
+        2009,
+        "fixed"
+      ],
+      "title": "Keep seed fixed when comparing modes"
+    },
+    {
+      "id": 11,
+      "type": "SamplerCustomAdvanced",
+      "pos": [
+        1540,
+        40
+      ],
+      "size": [
+        360,
+        220
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 11
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 8
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 9
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 10
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            12,
+            13,
+            23
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SamplerCustomAdvanced"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 12,
+      "type": "VAEDecode",
+      "pos": [
+        1960,
+        40
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 12
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 13,
+      "type": "VAEDecodeAudio",
+      "pos": [
+        1960,
+        170
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 13
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecodeAudio"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 14,
+      "type": "CreateVideo",
+      "pos": [
+        2340,
+        40
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 14
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 15
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "fps"
+          }
+        },
+        {
+          "name": "bit_depth",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "bit_depth"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        24,
+        8
+      ]
+    },
+    {
+      "id": 15,
+      "type": "SaveVideo",
+      "pos": [
+        2340,
+        220
+      ],
+      "size": [
+        360,
+        120
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 16
+        },
+        {
+          "name": "filename_prefix",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "filename_prefix"
+          }
+        },
+        {
+          "name": "format",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "format"
+          }
+        },
+        {
+          "name": "codec",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "codec"
+          }
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/h3_int8_ref2v",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 16,
+      "type": "MiniMaxH3TurboLoRA",
+      "pos": [
+        1160,
+        570
+      ],
+      "size": [
+        420,
+        150
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        },
+        {
+          "name": "lora_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "lora_name"
+          }
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "strength"
+          }
+        },
+        {
+          "name": "low_vram",
+          "type": "BOOLEAN",
+          "link": null,
+          "widget": {
+            "name": "low_vram"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            18,
+            19
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3TurboLoRA"
+      },
+      "widgets_values": [
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        1,
+        false
+      ],
+      "title": "Turbo LoRA (resident TP; keep bypass off for quality)"
+    },
+    {
+      "id": 17,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        870
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "image"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            20
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "Reference image (used when mode = reference_image)"
+    },
+    {
+      "id": 18,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        990
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "image"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            21
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "First frame (used when mode = first_last_frames)"
+    },
+    {
+      "id": 19,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        1110
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "image"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            22
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "Optional last frame (same geometry transform as first frame)"
+    },
+    {
+      "id": 20,
+      "type": "SaveMiniMaxH3Latent",
+      "pos": [
+        2340,
+        390
+      ],
+      "size": [
+        360,
+        100
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 23
+        },
+        {
+          "name": "filename",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "filename"
+          }
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveMiniMaxH3Latent"
+      },
+      "widgets_values": [
+        "./output/h3_int8_ref2v_latest_latent.pt"
+      ],
+      "title": "Save AV latent"
+    },
+    {
+      "id": 22,
+      "type": "Qwen32BQ2MPCLIPLoader",
+      "pos": [
+        40,
+        380
+      ],
+      "size": [
+        500,
+        150
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "runtime",
+          "type": "H3_TP_RUNTIME",
+          "link": 25
+        },
+        {
+          "name": "residency",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "residency"
+          }
+        },
+        {
+          "name": "keep_layers",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "keep_layers"
+          }
+        },
+        {
+          "name": "cache_dequantized",
+          "type": "BOOLEAN",
+          "link": null,
+          "widget": {
+            "name": "cache_dequantized"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            26
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "Qwen32BQ2MPCLIPLoader"
+      },
+      "widgets_values": [
+        "evict",
+        0,
+        false
+      ],
+      "title": "Qwen32B Q2 Layer-MP CLIP"
+    },
+    {
+      "id": 900,
+      "type": "Note",
+      "pos": [
+        540,
+        1120
+      ],
+      "size": [
+        560,
+        300
+      ],
+      "flags": {},
+      "order": 99,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "使用说明",
+      "properties": {},
+      "widgets_values": [
+        "当前: 参考图模式 832x480 124帧 4步\n\n【切换模式】节点 6 的 mode widget 直接改即可，不用重连线：\n  reference_image    -> 只用 reference_image 输入（节点 17）\n  first_last_frames  -> 只用 first_frame/last_frame（节点 18/19）\n未被选中的图片输入是 lazy 的，不会被求值，也不会重载模型。\n\n【VAE】视频 VAE 用 INT8-ConvRot。实测 448x256 解码额外显存约 306 MiB，\nFP16 同尺寸需要 >11 GiB，在双卡有 DiT 常驻时这个差距是决定性的。\nencoder 部分未量化，参考图编码精度不变。\n\n【显存布局】VAE 采样期 18/18、解码期 24/12，边界 block 走 NVLink 搬移。\n由 H3_VAE_DIT_SPLIT / H3_VAE_DECODE_SPLIT 控制；\n设 H3_VAE_SPLIT 会钉死单一布局并关掉搬移。\n\n【音频】音频 VAE 必须保持 FP32，不要改成 INT8/FP16。"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "MODEL"
+    ],
+    [
+      3,
+      4,
+      0,
+      6,
+      2,
+      "VAE"
+    ],
+    [
+      4,
+      4,
+      0,
+      12,
+      1,
+      "VAE"
+    ],
+    [
+      5,
+      5,
+      0,
+      13,
+      1,
+      "VAE"
+    ],
+    [
+      6,
+      6,
+      0,
+      7,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      7,
+      6,
+      1,
+      11,
+      4,
+      "LATENT"
+    ],
+    [
+      8,
+      7,
+      0,
+      11,
+      1,
+      "GUIDER"
+    ],
+    [
+      9,
+      8,
+      0,
+      11,
+      2,
+      "SAMPLER"
+    ],
+    [
+      10,
+      9,
+      0,
+      11,
+      3,
+      "SIGMAS"
+    ],
+    [
+      11,
+      10,
+      0,
+      11,
+      0,
+      "NOISE"
+    ],
+    [
+      12,
+      11,
+      0,
+      12,
+      0,
+      "LATENT"
+    ],
+    [
+      13,
+      11,
+      0,
+      13,
+      0,
+      "LATENT"
+    ],
+    [
+      14,
+      12,
+      0,
+      14,
+      0,
+      "IMAGE"
+    ],
+    [
+      15,
+      13,
+      0,
+      14,
+      1,
+      "AUDIO"
+    ],
+    [
+      16,
+      14,
+      0,
+      15,
+      0,
+      "VIDEO"
+    ],
+    [
+      17,
+      3,
+      0,
+      16,
+      0,
+      "MODEL"
+    ],
+    [
+      18,
+      16,
+      0,
+      7,
+      0,
+      "MODEL"
+    ],
+    [
+      19,
+      16,
+      0,
+      9,
+      0,
+      "MODEL"
+    ],
+    [
+      20,
+      17,
+      0,
+      6,
+      8,
+      "IMAGE"
+    ],
+    [
+      21,
+      18,
+      0,
+      6,
+      9,
+      "IMAGE"
+    ],
+    [
+      22,
+      19,
+      0,
+      6,
+      10,
+      "IMAGE"
+    ],
+    [
+      23,
+      11,
+      0,
+      20,
+      0,
+      "LATENT"
+    ],
+    [
+      24,
+      1,
+      0,
+      3,
+      1,
+      "H3_TP_RUNTIME"
+    ],
+    [
+      25,
+      1,
+      0,
+      22,
+      0,
+      "H3_TP_RUNTIME"
+    ],
+    [
+      26,
+      22,
+      0,
+      6,
+      1,
+      "CLIP"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [
+        0,
+        0
+      ]
+    },
+    "workflow_filenames": [
+      "h3-v100-multimode-qwen32-mp-832x480-124f-4step-ui.json"
+    ]
+  },
+  "version": 0.4
+}

@@ -40,6 +40,10 @@ class RuntimeConfig:
     model_path: str
     lora_path: str
     egrid_path: str
+    # ``auto`` selects Q4 for GGUF and the official INT8-ConvRot reader for
+    # safetensors.  Keep this explicit in the shared runtime so rank 0/rank 1
+    # cannot accidentally load different matrix backends.
+    dit_format: str = "auto"
     lora_strength: float = 1.0
     staging_mib: int = 4
     chunk_rows: int = 2048
@@ -705,7 +709,10 @@ class _TESpeedController:
 
 class H3TPRuntime:
     def __init__(self, config: RuntimeConfig) -> None:
-        self.config = config
+        self.config = replace(
+            config,
+            dit_format=tp.normalize_weight_format(config.dit_format, config.model_path),
+        )
         self.backbone: tp.H3TPBackbone | None = None
         self.child: subprocess.Popen[str] | None = None
         self.child_stderr = None
@@ -744,6 +751,8 @@ class H3TPRuntime:
             init_method,
             "--model",
             self.config.model_path,
+            "--weight-format",
+            self.config.dit_format,
             "--lora",
             self.config.lora_path,
             "--egrid",
@@ -806,6 +815,78 @@ class H3TPRuntime:
                 )
             return message.get("payload")
         raise TimeoutError(f"timed out waiting for H3 TP rank1 {expected}")
+
+    def release_cached_memory(self) -> dict[str, Any]:
+        """Return free allocator blocks on both ranks to the driver.
+
+        A long DiT forward leaves several GiB of empty segments in each rank's
+        caching allocator.  ``allocated`` drops but ``reserved`` does not, and
+        the driver counts reserved memory as used, so the next stage on that
+        card can fail to allocate while the shard itself has plenty of room.
+        Measured after a 720p forward: rank1 allocated 7580 MiB but reserved
+        11488 MiB, leaving 3908 MiB stranded and breaking the following Qwen
+        dequantisation on cuda:1.
+
+        Neither shard is unloaded; reloading the DiT shard costs ~34 s.  This
+        only drops cached blocks, so it is safe to call between requests.
+        """
+        with self.lock:
+            return self._release_cached_memory_locked()
+
+    def _release_cached_memory_locked(self) -> dict[str, Any]:
+        """``release_cached_memory`` body; caller already holds ``self.lock``."""
+        report: dict[str, Any] = {"rank0": None, "rank1": None}
+        if self.closed:
+            return report
+
+        device = torch.device("cuda:0")
+        before_reserved = torch.cuda.memory_reserved(device) / tp.MIB
+        before_allocated = torch.cuda.memory_allocated(device) / tp.MIB
+        # Drop this request's leftover activations before returning blocks:
+        # ``empty_cache`` only hands back segments with no live allocation, so a
+        # retained FP32 snapshot would otherwise pin its whole segment.
+        transient = None
+        if self.backbone is not None:
+            transient = self.backbone.release_transient_state()
+        gc.collect()
+        torch.cuda.synchronize(device)
+        torch.cuda.empty_cache()
+        report["rank0"] = {
+            "reserved_mib_before": before_reserved,
+            "reserved_mib_after": torch.cuda.memory_reserved(device) / tp.MIB,
+            "allocated_mib": before_allocated,
+            "allocated_mib_after": torch.cuda.memory_allocated(device) / tp.MIB,
+            "transient": transient,
+        }
+
+        # Rank 1 is a separate process, so its allocator has to be told
+        # explicitly.  A dead child is not an error here: this is cleanup, and
+        # the caller's real work should decide whether a missing peer matters.
+        if self.child is not None and self.child.poll() is None:
+            try:
+                self._send_child({"cmd": "release_cache"})
+                report["rank1"] = self._read_child("release_cache", timeout=60)
+            except Exception:
+                logging.warning(
+                    "[H3TP] rank1 cache release failed; continuing", exc_info=True
+                )
+
+        r0 = report["rank0"]
+        r1 = report["rank1"] or {}
+        # Report allocated as well as reserved.  Reserved alone hides whether
+        # the drop came from returning empty segments or from actually freeing
+        # this request's activations, which is the number that decides if the
+        # next stage fits.
+        logging.info(
+            "[H3TP] released VRAM: rank0 reserved %.0f -> %.0f MiB, "
+            "allocated %.0f -> %.0f MiB; rank1 reserved %.0f -> %.0f MiB, "
+            "allocated %.0f -> %.0f MiB (shards still resident)",
+            r0["reserved_mib_before"], r0["reserved_mib_after"],
+            r0["allocated_mib"], r0["allocated_mib_after"],
+            r1.get("reserved_mib_before", 0.0), r1.get("reserved_mib_after", 0.0),
+            r1.get("allocated_mib", 0.0), r1.get("allocated_mib_after", 0.0),
+        )
+        return report
 
     def _require_live_child(self, stage: str) -> None:
         """Fail fast when rank 1 is gone instead of blocking in a collective.
@@ -914,6 +995,7 @@ class H3TPRuntime:
                 "process_startup_seconds": time.time() - started_at,
                 "backend": "persistent parent rank0 + child rank1 / NCCL",
                 "world_size": 2,
+                "weight_format": self.config.dit_format,
                 "payload_mmap": False,
                 "rank0_pid": os.getpid(),
                 "rank1_pid": self.child.pid,
@@ -941,6 +1023,7 @@ class H3TPRuntime:
                     rank=0,
                     device=torch.device("cuda:0"),
                     model_path=self.config.model_path,
+                    weight_format=self.config.dit_format,
                     lora_path=self.config.lora_path,
                     egrid_path=self.config.egrid_path,
                     lora_strength=self.config.lora_strength,
@@ -966,6 +1049,7 @@ class H3TPRuntime:
                 "backend": "persistent parent rank0 + child rank1 / NCCL",
                 "world_size": 2,
                 "model": self.config.model_path,
+                "weight_format": self.config.dit_format,
                 "lora": self.config.lora_path,
                 "lora_strength": self.config.lora_strength,
                 "egrid": self.config.egrid_path,
@@ -1442,6 +1526,14 @@ class H3TPRuntime:
                 # Complete-layer MP is process-local and intentionally does
                 # not enter the NCCL protocol.  The same H3 runtime remains
                 # available for the later DiT forward.
+                #
+                # Hand back cached allocator blocks first.  On a second request
+                # the previous DiT forward has left several GiB of empty
+                # segments reserved on both cards, which the driver counts as
+                # used; the layer-MP dequantisation on cuda:1 then fails even
+                # though rank1's shard has room.  Released without touching
+                # either shard.
+                self._release_cached_memory_locked()
                 backend = self._ensure_qwen_mp_runtime()
                 output = backend.qwen_forward(
                     hidden,
@@ -1801,16 +1893,35 @@ _RUNTIME_LOCK = threading.Lock()
 
 def get_runtime(config: RuntimeConfig) -> H3TPRuntime:
     global _RUNTIME
+    normalized_config = replace(
+        config,
+        dit_format=tp.normalize_weight_format(config.dit_format, config.model_path),
+    )
     with _RUNTIME_LOCK:
         if _RUNTIME is None or _RUNTIME.closed:
-            _RUNTIME = H3TPRuntime(config)
+            _RUNTIME = H3TPRuntime(normalized_config)
             return _RUNTIME
-        if _RUNTIME.config != config:
+        if _RUNTIME.config != normalized_config:
             raise RuntimeError(
                 "an H3 TP runtime with different model/LoRA settings is already active; "
                 "restart the service to change persistent worker configuration"
             )
         return _RUNTIME
+
+
+def active_runtime() -> H3TPRuntime | None:
+    """Return the started runtime, or ``None`` when there is nothing to act on.
+
+    Deliberately does not create one, unlike :func:`get_runtime`: callers are
+    cleanup paths that must be inert on graphs which never used H3 TP.  A
+    runtime that exists but has not started owns no CUDA payload yet, so it is
+    reported as absent too.
+    """
+    with _RUNTIME_LOCK:
+        runtime = _RUNTIME
+    if runtime is None or runtime.closed or not runtime.started:
+        return None
+    return runtime
 
 
 def close_runtime() -> None:
@@ -1821,7 +1932,89 @@ def close_runtime() -> None:
             _RUNTIME = None
 
 
+_POSTSAMPLE_HOOK_MARKER = "_h3_tp_postsample_release"
+_POSTSAMPLE_HOOK_LOCK = threading.Lock()
+
+
+def install_postsample_release_hook() -> bool:
+    """Free DiT activations on both ranks as soon as the sampler returns.
+
+    Without this the last denoise step's tensors stay reachable until Python
+    happens to collect them, and the caching allocator keeps every segment it
+    grew during the forward.  At 720p/243f INT8 that leaves ~2.9 GiB reserved
+    plus an ~800 MiB dead FP32 residual on each card at the exact moment VAE
+    decode wants room.  The driver counts reserved bytes as used, so layer-MP
+    decode on cuda:1 can fail while both shards are nominally within budget.
+
+    Placement is the whole point: this has to be after the sampler's last step
+    and before the decode node runs.  ``KSAMPLER.sample`` is the single choke
+    point every H3 route shares, so wrapping its exit covers video decode,
+    audio decode and the CPU-offload VAE path alike -- unlike a hook on
+    ``H3ParallelVAE.decode``, which only fires when the layer-MP VAE is
+    resident.
+
+    The returned latent is not touched.  Only allocator blocks that nothing
+    references any more, plus each shard's per-request snapshot, are dropped;
+    weights stay resident so the next request does not pay the ~34 s reload.
+    """
+    if os.environ.get("H3_TP_POSTSAMPLE_RELEASE", "1").strip().lower() in {
+        "0", "false", "no", "off",
+    }:
+        logging.info(
+            "[H3TP] post-sample release disabled by H3_TP_POSTSAMPLE_RELEASE"
+        )
+        return False
+    try:
+        samplers = __import__("comfy.samplers", fromlist=["KSAMPLER"])
+    except Exception:
+        logging.debug("[H3TP] comfy.samplers unavailable; post-sample hook skipped")
+        return False
+
+    sampler_class = getattr(samplers, "KSAMPLER", None)
+    if sampler_class is None:
+        return False
+
+    with _POSTSAMPLE_HOOK_LOCK:
+        current = sampler_class.sample
+        if getattr(current, _POSTSAMPLE_HOOK_MARKER, False):
+            return False
+
+        import functools
+
+        @functools.wraps(current)
+        def sample_then_release(self, *args, **kwargs):
+            output = current(self, *args, **kwargs)
+            runtime = _RUNTIME
+            if runtime is None or runtime.closed or not runtime.started:
+                return output
+            try:
+                runtime.release_cached_memory()
+            except Exception:
+                # Cleanup must never fail a finished sample.  Decode may still
+                # OOM afterwards, but the latent the user already paid for
+                # stays valid and recoverable from the SaveLatent node.
+                logging.warning(
+                    "[H3TP] post-sample release failed; continuing", exc_info=True
+                )
+            return output
+
+        setattr(sample_then_release, _POSTSAMPLE_HOOK_MARKER, True)
+        sample_then_release._h3_tp_postsample_original_sample = current
+        sampler_class.sample = sample_then_release
+        logging.info(
+            "[H3TP] post-sample DiT activation release installed on KSAMPLER.sample"
+        )
+        return True
+
+
 atexit.register(close_runtime)
 
 
-__all__ = ["H3TPRuntime", "RuntimeConfig", "close_runtime", "get_runtime"]
+__all__ = [
+    "H3TPRuntime",
+    "RuntimeConfig",
+    "active_runtime",
+    "close_runtime",
+    "get_runtime",
+    "install_postsample_release_hook",
+]

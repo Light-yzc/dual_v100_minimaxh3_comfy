@@ -18,10 +18,12 @@ protocol or alternate model-parallel route is introduced here.
 from __future__ import annotations
 
 import nodes
+import node_helpers
 
 from comfy_extras.nodes_minimax_h3 import (
-    MiniMaxH3ImageToVideo as _UpstreamImageToVideo,
     MiniMaxH3ReferenceToVideo as _UpstreamRef2V,
+    _empty_av_latent,
+    _resize,
 )
 
 
@@ -283,20 +285,42 @@ class MiniMaxH3ReferenceKeyframeToVideoTP:
             )
             return _unwrap_node_output(result)
 
-        # Preserve the upstream semantics: first_frame and last_frame are
-        # independently optional, so this mode also remains usable for plain
-        # text-to-video when both image sockets are left unconnected.
-        result = _UpstreamImageToVideo.execute(
-            clip=clip,
-            vae=vae,
-            prompt=prompt,
-            width=width,
-            height=height,
-            length=length,
-            first_frame=first_frame,
-            last_frame=last_frame,
-        )
-        return _unwrap_node_output(result)
+        # The upstream implementation encodes Qwen before it calls
+        # ``vae.encode`` for the keyframes.  That order is harmless for an
+        # ordinary VAE, but the async H3 facade receives its Qwen-clear
+        # callback during ``clip.encode_from_tokens_scheduled`` and advances
+        # to DIT_READY.  A subsequent encoder call then correctly fails its
+        # lifecycle gate.  Build the same payload here with the independent
+        # keyframe VAE work first; tensor geometry, tokenization, conditioning
+        # metadata, and numerical operations remain identical.
+        latent, frame_count = _empty_av_latent(width, height, length)
+        images = []
+        keyframes = []
+        if first_frame is not None:
+            image = _resize(first_frame[:1], width, height, "center")
+            images.append(image)
+            keyframes.append({"resolved_frame_index": 0, "image": image})
+        if last_frame is not None:
+            image = _resize(last_frame[:1], width, height, "center")
+            images.append(image)
+            keyframes.append(
+                {"resolved_frame_index": frame_count - 1, "image": image}
+            )
+
+        for keyframe in keyframes:
+            keyframe["latent"] = vae.encode(keyframe.pop("image"))
+
+        tokens = clip.tokenize(prompt, images=images)
+        conditioning = clip.encode_from_tokens_scheduled(tokens)
+        if keyframes:
+            conditioning = node_helpers.conditioning_set_values(
+                conditioning,
+                {
+                    "minimax_keyframes": keyframes,
+                    "minimax_frame_count": frame_count,
+                },
+            )
+        return conditioning, latent
 
 
 NODE_CLASS_MAPPINGS = {

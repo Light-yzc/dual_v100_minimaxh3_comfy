@@ -1,6 +1,0 @@
-diff --git a/comfy_extras/nodes_minimax_h3.py b/comfy_extras/nodes_minimax_h3.py
---- a/comfy_extras/nodes_minimax_h3.py
-+++ b/comfy_extras/nodes_minimax_h3.py
-@@ -130,1 +130,1 @@
--            img = _resize(first_frame[:1], width, height, "disabled")
-+            img = _resize(first_frame[:1], width, height, "center")

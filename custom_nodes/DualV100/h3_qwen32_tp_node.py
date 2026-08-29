@@ -41,7 +41,7 @@ try:
         dequantize_ggml,
         inspect_gguf,
     )
-    from .h3_tp_backbone import DEFAULT_EGRID
+    from .h3_tp_backbone import DEFAULT_EGRID, normalize_weight_format
     from .h3_tp_runtime import RuntimeConfig, get_runtime
 except ImportError:  # pragma: no cover - standalone source-tree imports
     from h3_qwen32_q2_tp import (  # type: ignore[no-redef]
@@ -51,7 +51,7 @@ except ImportError:  # pragma: no cover - standalone source-tree imports
         dequantize_ggml,
         inspect_gguf,
     )
-    from h3_tp_backbone import DEFAULT_EGRID  # type: ignore[no-redef]
+    from h3_tp_backbone import DEFAULT_EGRID, normalize_weight_format  # type: ignore[no-redef]
     from h3_tp_runtime import RuntimeConfig, get_runtime  # type: ignore[no-redef]
 
 
@@ -1031,7 +1031,7 @@ class MiniMaxH3DualRuntimeLoader:
             name
             for category in ("unet_gguf", "unet", "diffusion_models")
             for name in _filename_list(category)
-            if name.lower().endswith(".gguf")
+            if name.lower().endswith((".gguf", ".safetensors"))
         )
         loras = _filename_list("loras")
         qwen = sorted(
@@ -1075,6 +1075,7 @@ class MiniMaxH3DualRuntimeLoader:
             model_path=model_path,
             lora_path=lora_path,
             egrid_path=str(Path(DEFAULT_EGRID).resolve()),
+            dit_format=normalize_weight_format("auto", model_path),
             lora_strength=float(strength),
             staging_mib=int(staging_mib),
             chunk_rows=int(chunk_rows),

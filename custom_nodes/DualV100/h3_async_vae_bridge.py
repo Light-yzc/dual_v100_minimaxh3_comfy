@@ -180,17 +180,46 @@ def register_active_async_vae(handle: AsyncVAEHandle) -> None:
         _cancel_and_release(previous)
 
 
-def _validate_fp16_h3_checkpoint(path: os.PathLike[str] | str) -> None:
+def _validate_h3_vae_checkpoint(path: os.PathLike[str] | str) -> str:
+    """Accept the two supported H3 video VAE layouts and name which one it is.
+
+    Two layouts are production paths now:
+
+    * all-FP16 -- the original checkpoint, loaded as ordinary tensors.
+    * INT8-ConvRot -- I8 qdata plus F32 ``weight_scale`` plus a ``comfy_quant``
+      JSON marker per quantized Linear, with an FP32 encoder and small
+      parameters.  ``h3_async_vae_int8`` supplies the loader callables.
+
+    Anything else fails closed rather than being materialised at a dtype the
+    compute path does not expect.
+    """
     specs, header = inspect_safetensors(path)
     checkpoint_metadata = header.get("metadata", {})
     if not isinstance(checkpoint_metadata, dict) or (
         "minimax_h3_video_vae" not in checkpoint_metadata
     ):
         raise ValueError("H3 async VAE requires a MiniMax H3 video VAE checkpoint")
-    if not specs or any(spec.dtype != torch.float16 for spec in specs.values()):
+    if not specs:
+        raise ValueError("H3 async VAE checkpoint contains no tensors")
+
+    if any(name.endswith(".comfy_quant") for name in specs):
+        allowed = {torch.int8, torch.uint8, torch.float32, torch.bfloat16, torch.float16}
+        unexpected = {
+            spec.dtype for spec in specs.values() if spec.dtype not in allowed
+        }
+        if unexpected:
+            raise ValueError(
+                "H3 async VAE INT8-ConvRot checkpoint has unexpected dtypes: "
+                f"{sorted(str(dtype) for dtype in unexpected)}"
+            )
+        return "int8_convrot"
+
+    if any(spec.dtype != torch.float16 for spec in specs.values()):
         raise ValueError(
-            "H3 async VAE production loading currently supports only an all-FP16 checkpoint"
+            "H3 async VAE supports an all-FP16 or an INT8-ConvRot checkpoint; "
+            "this file is neither"
         )
+    return "fp16"
 
 
 def maybe_load_async_vae_facade(
@@ -200,11 +229,11 @@ def maybe_load_async_vae_facade(
     split: int | None = None,
     prefetch_limits: Sequence[int | None] | None = None,
 ) -> H3AsyncVAE | None:
-    """Return and register the opt-in FP16 facade, otherwise leave loading alone."""
+    """Return and register the opt-in async facade, otherwise leave loading alone."""
 
     if not _enabled("H3_ASYNC_VAE_LOAD", False):
         return None
-    _validate_fp16_h3_checkpoint(path)
+    checkpoint_format = _validate_h3_vae_checkpoint(path)
     facade = load_h3_video_vae_async(
         path,
         devices,
@@ -216,6 +245,9 @@ def maybe_load_async_vae_facade(
     handle = getattr(facade, "async_handle", None)
     if handle is None:
         raise TypeError("H3 async VAE facade does not expose its lifecycle handle")
+    # The loader node logs this.  Two routes with very different memory
+    # profiles share one facade type, so the log has to name which one ran.
+    handle.checkpoint_format = checkpoint_format
     register_active_async_vae(handle)
     return facade
 
@@ -255,9 +287,46 @@ def notify_dit_start() -> bool:
     return started
 
 
+def _release_dit_shards() -> None:
+    """Return both DiT ranks' cached blocks before the decoder tail loads.
+
+    ``gc.collect``/``empty_cache`` below only affect this process, so they free
+    rank 0.  Rank 1 is a separate process whose allocator has to be told
+    explicitly, and at 720p it holds ~14.5 GiB reserved -- more than enough to
+    starve its half of a layer-MP decoder.
+
+    Done here rather than relying on the DiT node's own post-sample hook: both
+    hooks wrap ``KSAMPLER.sample``, and which one ends up outermost depends on
+    the order ComfyUI happens to execute the two loader nodes in.  The graph
+    does not constrain that order, so the release is invoked from the one place
+    that is guaranteed to run immediately before the decoder is materialised.
+    Releasing twice is harmless; releasing after the load would be useless.
+    """
+    try:
+        from .h3_tp_runtime import active_runtime
+    except ImportError:
+        try:
+            from custom_nodes.DualV100.h3_tp_runtime import active_runtime
+        except ImportError:
+            return
+    runtime = active_runtime()
+    if runtime is None:
+        return
+    try:
+        runtime.release_cached_memory()
+    except Exception:
+        # Never fail a finished sample over cleanup.  The decode that follows
+        # may still OOM, but the latent is already computed and saveable.
+        logging.warning(
+            "[H3 async VAE] DiT shard release before tail load failed; continuing",
+            exc_info=True,
+        )
+
+
 def _settle_dit_cuda(handle: AsyncVAEHandle) -> None:
     """Make final-forward frees driver-visible before uncapped tail loading."""
 
+    _release_dit_shards()
     gc.collect()
     if not torch.cuda.is_available():
         return

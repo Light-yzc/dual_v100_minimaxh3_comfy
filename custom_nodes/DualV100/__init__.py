@@ -205,10 +205,17 @@ class VAELoaderH3Device(comfy_nodes.VAELoader):
     TITLE = "VAE Loader (H3 Explicit Device)"
 
     def load_vae_on_device(self, vae_name, device="cuda:1"):
+        # The async facade defers the decoder until the sampler has returned, so
+        # only the ~688 MiB encoder coexists with the DiT forward peak.  That is
+        # the only route by which the INT8 VAE fits beside the INT8 DiT at 720p:
+        # at that size the two together are ~497 MiB over capacity no matter how
+        # the decoder blocks are split, because it is a total-capacity problem.
+        # The checkpoint's own layout (FP16 vs INT8-ConvRot) is detected from its
+        # header inside the loader, not from this name.
         if (
             os.environ.get("H3_ASYNC_VAE_LOAD", "0").lower()
             not in {"0", "false", "no", "off"}
-            and "minimax_h3_video_vae_fp16" in vae_name.lower()
+            and "minimax_h3_video_vae" in vae_name.lower()
         ):
             path = folder_paths.get_full_path_or_raise("vae", vae_name)
             facade = maybe_load_async_vae_facade(path)
@@ -217,9 +224,12 @@ class VAELoaderH3Device(comfy_nodes.VAELoader):
                     "H3_ASYNC_VAE_LOAD=1 requires two peer-accessible CUDA devices"
                 )
             install_turbo_sampler_hook()
+            checkpoint_format = getattr(
+                getattr(facade, "async_handle", None), "checkpoint_format", "unknown"
+            )
             print(
                 f"[DualV100 VAE] {vae_name} loaded as capped asynchronous "
-                "FP16 facade; decoder prefetch waits for paired Qwen clear",
+                f"{checkpoint_format} facade; decoder deferred past the DiT peak",
                 flush=True,
             )
             return (facade,)
@@ -228,10 +238,13 @@ class VAELoaderH3Device(comfy_nodes.VAELoader):
         # the ordinary VAE patcher first would put all 5.2 GB on one card and
         # DynamicVRAM would fault it again on every decode.  The specialised
         # loader assigns each disk slice directly to its permanent GPU.
-        if (
-            os.environ.get("H3_VAE_MP", "1").lower() not in {"0", "false", "no"}
-            and "minimax_h3_video_vae" in vae_name.lower()
-        ):
+        is_h3_video_vae = "minimax_h3_video_vae" in vae_name.lower()
+        vae_mp_requested = os.environ.get("H3_VAE_MP", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        if is_h3_video_vae and vae_mp_requested:
             path = folder_paths.get_full_path_or_raise("vae", vae_name)
             parallel = load_h3_video_vae_parallel(path)
             if parallel is not None:
@@ -241,6 +254,16 @@ class VAELoaderH3Device(comfy_nodes.VAELoader):
                     flush=True,
                 )
                 return (parallel,)
+        elif is_h3_video_vae:
+            # Say so out loud.  A silent fall-through here looks identical to a
+            # layer-MP load in the log, and the two have very different memory
+            # profiles: this route puts the whole 5.2 GB decoder behind
+            # DynamicVRAM on one card and re-faults it on every decode.
+            print(
+                f"[DualV100 VAE] {vae_name}: H3_VAE_MP=0, layer-MP skipped; "
+                f"single-device DynamicVRAM route on {device}",
+                flush=True,
+            )
 
         (vae,) = super().load_vae(vae_name)
         target = torch.device(device)

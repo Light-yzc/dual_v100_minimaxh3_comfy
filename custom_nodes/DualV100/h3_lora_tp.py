@@ -19,6 +19,12 @@ SAFETENSORS_DTYPES = {
     "BF16": torch.bfloat16,
     "F16": torch.float16,
     "F32": torch.float32,
+    # Official H3 INT8-ConvRot checkpoints keep their raw matrices as I8 and
+    # their small ``comfy_quant`` JSON markers as U8.  The LoRA reader is also
+    # used as the bounded safetensors primitive by the INT8 TP path, so keep
+    # these storage dtypes available without ever converting them to FP32.
+    "I8": torch.int8,
+    "U8": torch.uint8,
 }
 
 

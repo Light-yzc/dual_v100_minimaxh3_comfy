@@ -1,48 +1,55 @@
-# Python and local environments
-.venv/
-venv/
 __pycache__/
 *.py[cod]
-.pytest_cache/
-
-# Models and caches: never upload weights
-models/
-downloads/
-hf-cache/
-cache/
+/output/
+/input/
+!/input/example.png
+/models/
+/temp/
+# Never commit downloaded weights, latent dumps, or generated videos. The
+# small Turbo lookup table below is source-controlled because the node needs it.
 *.gguf
-*.safetensors
 *.ckpt
-*.bin
 *.pt
 *.pth
-
-# Generated media and telemetry
-output/
-outputs/
-temp/
-input/
+*.safetensors
 *.mp4
-*.webm
+*.mkv
 *.mov
-*.wav
-*.csv
-*.log
-
-# Benchmark/gate output.  This is measurement data, not source: it is
-# reproducible from scripts/ and was previously only excluded incidentally by
-# the suffix rules above, which let result *.json through.
-results/
-
-# Local configuration
-.env
+*.avi
+!/custom_nodes/ComfyUI-MiniMax-H3-Turbo/h3_silu_temb_grid.safetensors
+# This v0.2 distribution vendors the exact custom-node revisions used by the
+# dual-V100 runtime. Runtime caches remain excluded below.
+/custom_nodes/*
+!/custom_nodes/example_node.py.example
+!/custom_nodes/websocket_image_save.py
+!/custom_nodes/ComfyUI-ClipProj/
+!/custom_nodes/ComfyUI-GGUF/
+!/custom_nodes/ComfyUI-MiniMax-H3-Turbo/
+!/custom_nodes/ComfyUI-MultiGPU/
+!/custom_nodes/DualV100/
+!/custom_nodes/NoHostMMap/
 extra_model_paths.yaml
-
-# Editors and OS files
-.idea/
+/.vs
 .vscode/
+.idea/
+venv*/
+.venv/
+/web/extensions/*
+!/web/extensions/logging.js.example
+!/web/extensions/core/
+/tests-ui/data/object_info.json
+/user/*
+!/user/default/
+/user/default/*
+!/user/default/workflows/
+/user/default/workflows/*
+!/user/default/workflows/H3-V100-*.json
+!/user/default/workflows/H3-V100-START-HERE.md
+*.log
+web_custom_versions/
 .DS_Store
-Thumbs.db
-
-# 嵌套的独立 git 仓库，与 H3 推理部署无关
-train_text_enc/
+filtered-openapi.yaml
+uv.lock
+.comfy_environment
+/.torchinductor-cache/
+/models.ssd-link
