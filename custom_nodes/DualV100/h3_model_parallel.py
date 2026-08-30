@@ -14,7 +14,6 @@ multi-gigabyte checkpoint is created.
 
 from __future__ import annotations
 
-import collections
 import gc
 import json
 import logging
@@ -927,222 +926,6 @@ def _vae_rebalance_safety_bytes() -> int:
     return value << 20
 
 
-def _h3_vae_pipeline_depth() -> int:
-    """In-flight tile groups for the layer-MP decode pipeline.
-
-    Depth 2 is the minimum that overlaps anything and is also the cheapest in
-    peak memory: one group is on the second card while the next one is on the
-    first.  Larger depths only add resident activations without adding overlap
-    on a two-stage pipeline, so the value is clamped.
-    """
-    raw = os.environ.get("H3_VAE_MP_PIPELINE_DEPTH", "2").strip()
-    try:
-        depth = int(raw)
-    except ValueError as exc:
-        raise ValueError("H3_VAE_MP_PIPELINE_DEPTH must be an integer >= 2") from exc
-    if depth < 2:
-        raise ValueError("H3_VAE_MP_PIPELINE_DEPTH must be >= 2")
-    return min(depth, 4)
-
-
-def _h3_vae_pipelined_tiled_decode(self, z: torch.Tensor) -> torch.Tensor:
-    """Overlap the two layer-MP decoder stages across independent spatial tiles.
-
-    The H3 video decoder is 36 blocks split ``24/12`` over two cards, so a
-    single tile leaves one card idle for its whole stage.  Spatial tiling
-    already produces several independent tiles per temporal chunk, which is
-    enough to software-pipeline: tile ``i`` runs its second-card stage while
-    tile ``i+1`` runs its first-card stage.
-
-    Every tile still traverses all 36 blocks in the original order with the
-    same weights, and the blend/canvas order is unchanged, so the result is
-    expected to be bitwise identical to the serial path.  Only the stream
-    assignment differs.  Any failure falls back to the serial implementation.
-    """
-    decoder = self.decoder
-    if not isinstance(decoder, H3ParallelViTDecoder):
-        return self._h3_mp_pipeline_original_tiled_decode(z)
-
-    group_size = max(1, int(getattr(self, "_h3_v100_int8_tile_batch", 1)))
-    height = int(z.shape[-2]) * int(self.vae_ratio)
-    width = int(z.shape[-1]) * int(self.vae_ratio)
-    y_idx, y_len, y_overlap = self.split_tiles(height)
-    x_idx, x_len, x_overlap = self.split_tiles(width)
-    if len(y_idx) * len(x_idx) <= group_size:
-        # A single group has nothing to overlap with.
-        return self._h3_mp_pipeline_original_tiled_decode(z)
-
-    dev_first = decoder.first_device
-    dev_second = decoder.second_device
-    streams = self._h3_mp_pipeline_streams
-    stream_first, stream_second = streams
-    depth = _h3_vae_pipeline_depth()
-    input_batch = int(z.shape[0])
-
-    # The caller produced ``z`` on the default stream of the first card, and
-    # will consume the canvas on the default stream of the second card.
-    stream_first.wait_stream(torch.cuda.current_stream(dev_first))
-    stream_second.wait_stream(torch.cuda.current_stream(dev_second))
-    z.record_stream(stream_first)
-
-    canvas = None
-    row_tails = []
-    out_y = 0
-    tile_height = 0
-    inflight = collections.deque()
-
-    with torch.cuda.stream(stream_first), torch.cuda.stream(stream_second):
-        for i, i_pos in enumerate(y_idx):
-            zi = i_pos // self.vae_ratio
-            zl = y_len[i] // self.vae_ratio
-            new_tails = []
-            left_tail = None
-            out_x = 0
-
-            for group_start in range(0, len(x_idx), group_size):
-                group_end = min(group_start + group_size, len(x_idx))
-
-                # Bound the number of live tile groups.  Waiting on the event
-                # of the group that finished ``depth`` steps ago lets the
-                # allocator reuse its activations without draining the pipe.
-                while len(inflight) >= depth:
-                    inflight.popleft().synchronize()
-
-                latent_tiles = [
-                    z[
-                        ...,
-                        zi : zi + zl,
-                        x_idx[j] // self.vae_ratio : x_idx[j] // self.vae_ratio
-                        + x_len[j] // self.vae_ratio,
-                    ]
-                    for j in range(group_start, group_end)
-                ]
-                latent_group = (
-                    latent_tiles[0]
-                    if len(latent_tiles) == 1
-                    else torch.cat(latent_tiles, dim=0)
-                )
-
-                # First-card stage runs on ``stream_first``; the cross-card
-                # handoff inside ``stage_second`` is issued on the source
-                # card's current stream and ordered against ``stream_second``
-                # by the stream-context pair above.
-                hidden, rotary, shape = decoder.stage_first(
-                    self.post_quant_conv(latent_group)
-                )
-                del latent_group, latent_tiles
-                decoded_group = decoder.stage_second(hidden, rotary, shape)
-                del hidden, rotary
-
-                for local_index, j in enumerate(range(group_start, group_end)):
-                    batch_start = local_index * input_batch
-                    tile = decoded_group[batch_start : batch_start + input_batch]
-
-                    if i < len(y_idx) - 1:
-                        new_tails.append(tile[..., -y_overlap[i] :, :].clone())
-                    next_left_tail = (
-                        tile[..., :, -x_overlap[j] :].clone()
-                        if j < len(x_idx) - 1
-                        else None
-                    )
-                    if i > 0:
-                        tile = self.blend(row_tails[j], tile, y_overlap[i - 1], dim=-2)
-                    if j > 0:
-                        tile = self.blend(left_tail, tile, x_overlap[j - 1], dim=-1)
-                    left_tail = next_left_tail
-                    if i < len(y_idx) - 1:
-                        tile = tile[..., : -y_overlap[i], :]
-                    if j < len(x_idx) - 1:
-                        tile = tile[..., :, : -x_overlap[j]]
-                    if canvas is None:
-                        canvas = torch.empty(
-                            *tile.shape[:-2],
-                            height,
-                            width,
-                            dtype=tile.dtype,
-                            device=tile.device,
-                        )
-                    canvas[
-                        ...,
-                        out_y : out_y + tile.shape[-2],
-                        out_x : out_x + tile.shape[-1],
-                    ].copy_(tile)
-                    out_x += int(tile.shape[-1])
-                    tile_height = int(tile.shape[-2])
-
-                del decoded_group
-                done = torch.cuda.Event()
-                done.record(stream_second)
-                inflight.append(done)
-
-            row_tails = new_tails
-            out_y += tile_height
-
-    if canvas is None:
-        raise RuntimeError("H3 VAE MP pipeline produced no spatial tiles")
-
-    # Hand the canvas back to the default streams the caller is using.
-    torch.cuda.current_stream(dev_second).wait_stream(stream_second)
-    torch.cuda.current_stream(dev_first).wait_stream(stream_first)
-    canvas.record_stream(torch.cuda.current_stream(dev_second))
-    return canvas
-
-
-def _h3_vae_pipeline_entry(self, z: torch.Tensor) -> torch.Tensor:
-    """Fail closed: any pipeline error permanently reverts to serial decode."""
-    if not getattr(self, "_h3_mp_pipeline_active", False):
-        return self._h3_mp_pipeline_original_tiled_decode(z)
-    try:
-        return _h3_vae_pipelined_tiled_decode(self, z)
-    except torch.cuda.OutOfMemoryError:
-        self._h3_mp_pipeline_active = False
-        logging.warning(
-            "[H3 VAE MP] tile pipeline hit CUDA OOM; reverting to serial decode "
-            "for the rest of this process"
-        )
-    except Exception:
-        self._h3_mp_pipeline_active = False
-        logging.exception(
-            "[H3 VAE MP] tile pipeline failed; reverting to serial decode for "
-            "the rest of this process"
-        )
-    for stream in getattr(self, "_h3_mp_pipeline_streams", ()):  # drain partial work
-        stream.synchronize()
-    return self._h3_mp_pipeline_original_tiled_decode(z)
-
-
-def _install_h3_vae_mp_pipeline(model: nn.Module, devices) -> dict:
-    """Install the opt-in cross-stage tile pipeline on a layer-MP VAE."""
-    report = {"enabled": False, "reason": "disabled by default"}
-    if not _enabled("H3_VAE_MP_PIPELINE", False):
-        return report
-    if not isinstance(getattr(model, "decoder", None), H3ParallelViTDecoder):
-        report["reason"] = "decoder is not layer-parallel"
-        return report
-
-    depth = _h3_vae_pipeline_depth()
-    if not hasattr(model, "_h3_mp_pipeline_original_tiled_decode"):
-        model._h3_mp_pipeline_original_tiled_decode = model.tiled_decode
-        model.tiled_decode = types.MethodType(_h3_vae_pipeline_entry, model)
-    model._h3_mp_pipeline_streams = tuple(
-        torch.cuda.Stream(device=device) for device in devices
-    )
-    model._h3_mp_pipeline_active = True
-    report.update(
-        {
-            "enabled": True,
-            "reason": "H3_VAE_MP_PIPELINE=1",
-            "depth": depth,
-            "streams": [str(device) for device in devices],
-        }
-    )
-    logging.info(
-        "[H3 VAE MP] tile cross-stage pipeline enabled: depth=%d, streams=%s,%s",
-        depth, devices[0], devices[1],
-    )
-    return report
-
-
 def _parallel_qwen_forward(self, x, attention_mask=None, embeds=None, num_tokens=None,
                            intermediate_output=None, final_layer_norm_intermediate=True,
                            dtype=None, position_ids=None, embeds_info=[],
@@ -1656,9 +1439,6 @@ def _load_h3_int8_parallel_model(path: str, state_dict, devices, split: int,
         raise ValueError("H3_VAE_INT8_TILE_BATCH must be a positive integer") from exc
     int8_tile_batch = _install_h3_v100_int8_tile_batch(model, int8_tile_batch)
     model.decoder = H3ParallelViTDecoder(source_decoder, first, second, split)
-    # Installed after the tile-batch wrapper so the pipeline's serial fallback
-    # is the batched path, not the stock one.
-    pipeline_report = _install_h3_vae_mp_pipeline(model, devices)
     model.eval()
     layout = H3VAELayoutManager(
         model, devices, split, split if decode_split is None else decode_split
@@ -1690,7 +1470,6 @@ def _load_h3_int8_parallel_model(path: str, state_dict, devices, split: int,
         "int8_compute_backend": int8_compute_backend,
         "sm70_w8a16_linears": w8a16_count,
         "int8_spatial_tile_batch": int8_tile_batch,
-        "mp_tile_pipeline": pipeline_report,
         "vae_layout": layout.report(),
         "logical_fp16_bytes": logical_bytes,
         "resident_storage_bytes": storage_bytes,
@@ -1750,7 +1529,6 @@ def _load_h3_parallel_model(path: str, devices, split: int,
     # with the explicit two-stage implementation.  Registering it under the
     # wrapper does not duplicate storage: ``source`` is the same module object.
     model.decoder = H3ParallelViTDecoder(decoder, first, second, split)
-    pipeline_report = _install_h3_vae_mp_pipeline(model, devices)
 
     del state_dict
     gc.collect()
@@ -1770,7 +1548,6 @@ def _load_h3_parallel_model(path: str, devices, split: int,
         "decoder_blocks": len(decoder.transformer_blocks),
         "materialized_tensors": materialized,
         "weight_bytes": size,
-        "mp_tile_pipeline": pipeline_report,
         "vae_layout": layout.report(),
         "decoder_devices": [
             str(_first_parameter_device(decoder.transformer_blocks[0])),

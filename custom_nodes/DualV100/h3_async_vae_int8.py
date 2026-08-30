@@ -127,8 +127,6 @@ class Int8AsyncVAEAdapter:
         # few dozen bytes of JSON and carry no device state, so unlike the
         # scales they are safe to cache across generations.
         self._marker_cache: dict[str, dict[str, Any]] = {}
-        self.int8_count = 0
-        self.ordinary_count = 0
 
         self._quantized_weights = {
             name[: -len(_QUANT_MARKER_SUFFIX)] + ".weight"
@@ -137,6 +135,14 @@ class Int8AsyncVAEAdapter:
         }
         if not self._quantized_weights:
             raise ValueError("no INT8 quantized weights found in H3 VAE checkpoint")
+        metadata = {
+            name
+            for name in specs
+            if name.endswith(_QUANT_MARKER_SUFFIX)
+            or name.endswith(_QUANT_SCALE_SUFFIX)
+        }
+        self.int8_count = len(self._quantized_weights)
+        self.ordinary_count = len(set(specs).difference(metadata, self._quantized_weights))
 
     # ------------------------------------------------------------------
     # model_factory
@@ -209,8 +215,6 @@ class Int8AsyncVAEAdapter:
             token.wait()
             value = value.to(dtype=target_dtype)
             token = _CopyToken()
-        with self._lock:
-            self.ordinary_count += 1
         return value, token
 
     def _load_quantized_weight(
@@ -269,8 +273,6 @@ class Int8AsyncVAEAdapter:
             convrot=bool(config.get("convrot", False)),
             convrot_groupsize=int(config.get("convrot_groupsize", 256)),
         )
-        with self._lock:
-            self.int8_count += 1
         return (
             QuantizedTensor(qdata, "TensorWiseINT8Layout", params),
             _CopyToken(),
@@ -341,7 +343,6 @@ class Int8AsyncVAEAdapter:
             H3ParallelViTDecoder,
             _install_h3_v100_int8_tile_batch,
             _install_h3_v100_int8_w8a16,
-            _install_h3_vae_mp_pipeline,
         )
 
         first, second = self.devices
@@ -369,7 +370,6 @@ class Int8AsyncVAEAdapter:
         tile_batch = _install_h3_v100_int8_tile_batch(model, tile_batch)
 
         model.decoder = H3ParallelViTDecoder(source_decoder, first, second, split)
-        pipeline_report = _install_h3_vae_mp_pipeline(model, self.devices)
         model.eval()
 
         for device in self.devices:
@@ -388,7 +388,6 @@ class Int8AsyncVAEAdapter:
             "int8_compute_backend": backend,
             "sm70_w8a16_linears": w8a16_count,
             "int8_spatial_tile_batch": tile_batch,
-            "mp_tile_pipeline": pipeline_report,
             "layout_manager": None,
         }
         logging.info(

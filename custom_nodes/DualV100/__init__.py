@@ -15,7 +15,6 @@ dynamic_guard = importlib.import_module(
     "custom_nodes.ComfyUI-MultiGPU.clip_dynamic_load_list_guard"
 )
 from . import h3_latent_io as latent_io
-from . import h3_v100_attention
 from . import h3_v100_fp32_linear
 from . import h3_v100_rms_rope
 from . import h3_tp_node
@@ -51,11 +50,7 @@ if os.environ.get("H3_NO_HOST_MMAP", "1").lower() not in {"0", "false", "no"}:
     # sees the header-only reader for all later H3 VAE/LoRA loads.
     importlib.import_module("custom_nodes.NoHostMMap.safetensors").install()
 
-# Opt-in and H3-local: this never changes attention dispatch for other ComfyUI
-# models, and retains PyTorch SDPA unless H3_V100_ATTENTION explicitly selects
-# the numerically/performance-qualified SM70 kernel.
 h3_v100_fp32_linear.install_from_env()
-h3_v100_attention.install_from_env()
 h3_v100_rms_rope.install_from_env()
 
 

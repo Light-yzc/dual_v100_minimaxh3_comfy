@@ -21,6 +21,7 @@ Qwen3-VL 32B Q2 layer-MP
 - INT8 视频 VAE decoder 延迟到 DiT 峰值之后加载，避免 720p 采样期显存冲突。
 - 720p host 视频画布默认 FP16，配合 `--cache-none` 避免 RAM/cgroup 压力。
 - Qwen32 默认使用数值等价的 layer-MP；output-row TP 仍是实验功能。
+- Qwen32 layer-MP 默认预取下一层压缩 payload；实测逐元素一致并降低 TE wall time。
 - 修复首尾帧模式的生命周期顺序：先 VAE encode，再 Qwen，避免 `state=dit_ready`。
 - 补齐 reference image、first/last frame、832×480 和 720p 的 API/UI 工作流。
 
@@ -160,6 +161,10 @@ MiniMaxH3Int8StaticLoader
 - 720p、243 帧、4 step：成功出片；DiT 峰值之后每卡释放约 4.3 GiB reserved VRAM，
   再加载 decoder。
 - 连续请求可复用 static skeleton 和持久 DiT TP，不创建第二份 DiT。
+- Qwen32 两轮 layer-MP：无预取 `29.292 / 20.937 s`，默认 4 MiB staging 预取
+  `20.513 / 19.975 s`；98/98 命中且 `max_abs=0`。16 MiB staging 更慢，未采用。
+- 448×256/22 帧 smoke 连续两次成功：冷轮 `116.3 s`，常驻复用轮 `34.0 s`；
+  第二轮 DiT forward `0.576 s`，VAE 两轮均为 144 个 INT8 Linear。
 - Python 文件通过 `py_compile`；工作流 JSON 均通过解析检查。
 
 这些数字是双 V100 实机记录，不是跨机器保证。长序列下 GPU1 如果热降频，rank0 会在

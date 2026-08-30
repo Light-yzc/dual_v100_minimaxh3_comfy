@@ -38,10 +38,9 @@
     }
   },
   "4": {
-    "class_type": "UNETLoader",
+    "class_type": "MiniMaxH3Int8StaticLoader",
     "inputs": {
-      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
     },
     "_meta": {
       "title": "DiT INT8 ConvRot 加载 (SSD)"
