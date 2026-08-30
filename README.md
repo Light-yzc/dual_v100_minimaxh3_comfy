@@ -165,6 +165,8 @@ MiniMaxH3Int8StaticLoader
   `20.513 / 19.975 s`；98/98 命中且 `max_abs=0`。16 MiB staging 更慢，未采用。
 - 448×256/22 帧 smoke 连续两次成功：冷轮 `116.3 s`，常驻复用轮 `34.0 s`；
   第二轮 DiT forward `0.576 s`，VAE 两轮均为 144 个 INT8 Linear。
+- static skeleton 冷启动进一步优化为 `108.1 s`，热轮 `32.3 s`；启动日志不再输出
+  50 层被 TP 接管的预期 missing-weight 警告。
 - Python 文件通过 `py_compile`；工作流 JSON 均通过解析检查。
 
 这些数字是双 V100 实机记录，不是跨机器保证。长序列下 GPU1 如果热降频，rank0 会在

@@ -546,6 +546,22 @@ class MiniMaxH3Int8StaticLoader:
             if isinstance(factory_kwargs, dict) and factory_kwargs.get("device") is not None:
                 factory_kwargs["device"] = storage_device
                 factory_kwargs["dtype"] = storage_dtype
+
+        # The checkpoint payload for these 50 blocks is loaded directly by
+        # the two persistent TP workers; it must never pass through this
+        # compatibility skeleton.  Drop the parameter-heavy meta module tree
+        # before ``load_state_dict`` and retain only its 50-slot structural
+        # contract for the following TP node.  Besides releasing thousands of
+        # short-lived module/parameter objects, this avoids hundreds of
+        # expected "missing weight" warnings on every cold service start.
+        source_blocks = model.diffusion_model.blocks
+        if len(source_blocks) != 50:
+            raise ValueError(
+                f"expected 50 H3 blocks in INT8 static skeleton, got {len(source_blocks)}"
+            )
+        model.diffusion_model.blocks = nn.ModuleList(nn.Identity() for _ in range(50))
+        del source_blocks
+
         kept = {}
         for key, value in sd.items():
             if key.startswith("blocks."):
