@@ -1,1 +1,1410 @@
-{"id":"h3-v100-15-int8-vae-mp-832x480-124f-1step","revision":0,"last_node_id":900,"last_link_id":27,"nodes":[{"id":4,"type":"VAELoaderH3Device","pos":[40,560],"size":[426.5666564941406,100],"flags":{},"order":0,"mode":0,"inputs":[{"localized_name":"vae_name","name":"vae_name","type":"COMBO","widget":{"name":"vae_name"},"link":null},{"localized_name":"device","name":"device","type":"COMBO","widget":{"name":"device"},"link":null}],"outputs":[{"localized_name":"VAE","name":"VAE","type":"VAE","links":[3,4]}],"title":"Video VAE INT8 ConvRot · deferred decoder dual-card MP","properties":{"Node name for S&R":"VAELoaderH3Device"},"widgets_values":["minimax_h3_video_vae_int8_convrot.safetensors","cuda:0"]},{"id":5,"type":"VAELoaderH3Device","pos":[40,700],"size":[420,100],"flags":{},"order":1,"mode":0,"inputs":[{"localized_name":"vae_name","name":"vae_name","type":"COMBO","widget":{"name":"vae_name"},"link":null},{"localized_name":"device","name":"device","type":"COMBO","widget":{"name":"device"},"link":null}],"outputs":[{"localized_name":"VAE","name":"VAE","type":"VAE","links":[5]}],"title":"Audio VAE","properties":{"Node name for S&R":"VAELoaderH3Device"},"widgets_values":["minimax_h3_audio_vae_fp32.safetensors","cuda:0"]},{"id":7,"type":"BasicGuider","pos":[1160,40],"size":[320,100],"flags":{},"order":14,"mode":0,"inputs":[{"localized_name":"model","name":"model","type":"MODEL","link":18},{"localized_name":"conditioning","name":"conditioning","type":"CONDITIONING","link":6}],"outputs":[{"localized_name":"GUIDER","name":"GUIDER","type":"GUIDER","links":[8]}],"properties":{"Node name for S&R":"BasicGuider"},"widgets_values":[]},{"id":14,"type":"CreateVideo","pos":[2340,40],"size":[320,120],"flags":{},"order":20,"mode":0,"inputs":[{"localized_name":"images","name":"images","type":"IMAGE","link":14},{"localized_name":"audio","name":"audio","shape":7,"type":"AUDIO","link":15},{"localized_name":"fps","name":"fps","type":"FLOAT","widget":{"name":"fps"},"link":null},{"localized_name":"bit_depth","name":"bit_depth","shape":7,"type":"INT","widget":{"name":"bit_depth"},"link":null}],"outputs":[{"localized_name":"VIDEO","name":"VIDEO","type":"VIDEO","links":[16]}],"properties":{"Node name for S&R":"CreateVideo"},"widgets_values":[24,8]},{"id":1,"type":"MiniMaxH3DualRuntimeLoader","pos":[36.45808736717828,-49.728453364816964],"size":[500,220],"flags":{},"order":2,"mode":0,"inputs":[{"localized_name":"unet_name","name":"unet_name","type":"COMBO","widget":{"name":"unet_name"},"link":null},{"localized_name":"lora_name","name":"lora_name","type":"COMBO","widget":{"name":"lora_name"},"link":null},{"localized_name":"qwen_name","name":"qwen_name","type":"COMBO","widget":{"name":"qwen_name"},"link":null},{"localized_name":"strength","name":"strength","type":"FLOAT","widget":{"name":"strength"},"link":null},{"localized_name":"staging_mib","name":"staging_mib","type":"INT","widget":{"name":"staging_mib"},"link":null},{"localized_name":"chunk_rows","name":"chunk_rows","type":"INT","widget":{"name":"chunk_rows"},"link":null}],"outputs":[{"localized_name":"runtime","name":"runtime","type":"H3_TP_RUNTIME","links":[24,25]}],"title":"Shared H3/Qwen32 runtime · INT8 DiT + Qwen32 MP","properties":{"Node name for S&R":"MiniMaxH3DualRuntimeLoader"},"widgets_values":["minimax_h3_fl2va_pruned_int8_convrot.safetensors","minimax_h3_turbo_v4_step600_ema.safetensors","qwen3vl-32B-MiniMax-H3-Q2_K.gguf",1,4,2048]},{"id":19,"type":"LoadImage","pos":[14.025974025974033,1765.2538370720195],"size":[441.79999389648435,314],"flags":{},"order":3,"mode":2,"inputs":[{"localized_name":"image","name":"image","type":"COMBO","widget":{"name":"image"},"link":null},{"localized_name":"choose file to upload","name":"upload","type":"IMAGEUPLOAD","widget":{"name":"upload"},"link":null}],"outputs":[{"localized_name":"IMAGE","name":"IMAGE","type":"IMAGE","links":[22]},{"localized_name":"MASK","name":"MASK","type":"MASK","links":null}],"title":"Optional last frame (same geometry transform as first frame)","properties":{"Node name for S&R":"LoadImage"},"widgets_values":["example.png","image"]},{"id":9,"type":"BasicScheduler","pos":[1160,170],"size":[320,120],"flags":{},"order":15,"mode":0,"inputs":[{"localized_name":"model","name":"model","type":"MODEL","link":19},{"localized_name":"scheduler","name":"scheduler","type":"COMBO","widget":{"name":"scheduler"},"link":null},{"localized_name":"steps","name":"steps","type":"INT","widget":{"name":"steps"},"link":null},{"localized_name":"denoise","name":"denoise","type":"FLOAT","widget":{"name":"denoise"},"link":null}],"outputs":[{"localized_name":"SIGMAS","name":"SIGMAS","type":"SIGMAS","links":[10]}],"title":"BasicScheduler · 1 step · 832x480 124f","properties":{"Node name for S&R":"BasicScheduler"},"widgets_values":["simple",4,1]},{"id":3,"type":"MiniMaxH3TensorParallelInt8","pos":[542.3612750885478,611.3223140495871],"size":[500,190],"flags":{},"order":11,"mode":0,"inputs":[{"localized_name":"model","name":"model","type":"MODEL","link":2},{"localized_name":"runtime","name":"runtime","shape":7,"type":"H3_TP_RUNTIME","link":24},{"localized_name":"unet_name","name":"unet_name","type":"COMBO","widget":{"name":"unet_name"},"link":null},{"localized_name":"lora_name","name":"lora_name","type":"COMBO","widget":{"name":"lora_name"},"link":null},{"localized_name":"strength","name":"strength","type":"FLOAT","widget":{"name":"strength"},"link":null},{"localized_name":"chunk_rows","name":"chunk_rows","type":"INT","widget":{"name":"chunk_rows"},"link":null},{"localized_name":"weight_format","name":"weight_format","shape":7,"type":"COMBO","widget":{"name":"weight_format"},"link":null}],"outputs":[{"localized_name":"MODEL","name":"MODEL","type":"MODEL","links":[17]}],"title":"DiT INT8 ConvRot persistent 2-way TP","properties":{"Node name for S&R":"MiniMaxH3TensorParallelInt8"},"widgets_values":["minimax_h3_fl2va_pruned_int8_convrot.safetensors","minimax_h3_turbo_v4_step600_ema.safetensors",1,2048,"int8_convrot"]},{"id":2,"type":"MiniMaxH3Int8StaticLoader","pos":[34.129870129870135,224.03423848878396],"size":[420,100],"flags":{},"order":4,"mode":0,"inputs":[{"localized_name":"unet_name","name":"unet_name","type":"COMBO","widget":{"name":"unet_name"},"link":null}],"outputs":[{"localized_name":"MODEL","name":"MODEL","type":"MODEL","links":[2]}],"properties":{"Node name for S&R":"MiniMaxH3Int8StaticLoader"},"widgets_values":["minimax_h3_fl2va_pruned_int8_convrot.safetensors"]},{"id":13,"type":"VAEDecodeAudio","pos":[1953.5601588494153,188.246216593324],"size":[320,100],"flags":{},"order":18,"mode":0,"inputs":[{"localized_name":"samples","name":"samples","type":"LATENT","link":13},{"localized_name":"vae","name":"vae","type":"VAE","link":5}],"outputs":[{"localized_name":"AUDIO","name":"AUDIO","type":"AUDIO","links":[15]}],"properties":{"Node name for S&R":"VAEDecodeAudio"},"widgets_values":[]},{"id":12,"type":"VAEDecode","pos":[1964.8786675383215,36.09706596934247],"size":[320,100],"flags":{},"order":17,"mode":0,"inputs":[{"localized_name":"samples","name":"samples","type":"LATENT","link":12},{"localized_name":"vae","name":"vae","type":"VAE","link":4}],"outputs":[{"localized_name":"IMAGE","name":"IMAGE","type":"IMAGE","links":[14]}],"properties":{"Node name for S&R":"VAEDecode"},"widgets_values":[]},{"id":16,"type":"MiniMaxH3TurboLoRA","pos":[1154.0968122786303,612.502951593861],"size":[420,150],"flags":{},"order":13,"mode":0,"inputs":[{"localized_name":"model","name":"model","type":"MODEL","link":17},{"localized_name":"lora_name","name":"lora_name","type":"COMBO","widget":{"name":"lora_name"},"link":null},{"localized_name":"strength","name":"strength","type":"FLOAT","widget":{"name":"strength"},"link":null},{"localized_name":"low_vram","name":"low_vram","type":"BOOLEAN","widget":{"name":"low_vram"},"link":null}],"outputs":[{"localized_name":"MODEL","name":"MODEL","type":"MODEL","links":[18,19]}],"title":"Turbo LoRA (persistent TP; keep bypass off for quality)","properties":{"Node name for S&R":"MiniMaxH3TurboLoRA"},"widgets_values":["minimax_h3_turbo_v4_step600_ema.safetensors",1,false]},{"id":8,"type":"MiniMaxH3TurboSampler","pos":[1162.2539444027045,342.77235161532667],"size":[320,80],"flags":{},"order":5,"mode":0,"inputs":[],"outputs":[{"localized_name":"SAMPLER","name":"SAMPLER","type":"SAMPLER","links":[9]}],"title":"H3 Turbo 4-step sampler","properties":{"Node name for S&R":"MiniMaxH3TurboSampler"},"widgets_values":[]},{"id":18,"type":"LoadImage","pos":[12.777035136163667,1390.8605969537614],"size":[420,314.0000000000001],"flags":{},"order":6,"mode":2,"inputs":[{"localized_name":"image","name":"image","type":"COMBO","widget":{"name":"image"},"link":null},{"localized_name":"choose file to upload","name":"upload","type":"IMAGEUPLOAD","widget":{"name":"upload"},"link":null}],"outputs":[{"localized_name":"IMAGE","name":"IMAGE","type":"IMAGE","links":[]},{"localized_name":"MASK","name":"MASK","type":"MASK","links":null}],"title":"First frame (used when mode = first_last_frames)","properties":{"Node name for S&R":"LoadImage"},"widgets_values":["example.png","image"]},{"id":11,"type":"SamplerCustomAdvanced","pos":[1540,40],"size":[360,220],"flags":{},"order":16,"mode":0,"inputs":[{"localized_name":"noise","name":"noise","type":"NOISE","link":11},{"localized_name":"guider","name":"guider","type":"GUIDER","link":8},{"localized_name":"sampler","name":"sampler","type":"SAMPLER","link":9},{"localized_name":"sigmas","name":"sigmas","type":"SIGMAS","link":10},{"localized_name":"latent_image","name":"latent_image","type":"LATENT","link":7}],"outputs":[{"localized_name":"output","name":"output","type":"LATENT","links":[12,13,23]},{"localized_name":"denoised_output","name":"denoised_output","type":"LATENT","links":null}],"properties":{"Node name for S&R":"SamplerCustomAdvanced"},"widgets_values":[]},{"id":15,"type":"SaveVideo","pos":[2359.312010303747,261.3083610604269],"size":[360,305],"flags":{},"order":21,"mode":0,"inputs":[{"localized_name":"video","name":"video","type":"VIDEO","link":16},{"localized_name":"filename_prefix","name":"filename_prefix","type":"STRING","widget":{"name":"filename_prefix"},"link":null},{"localized_name":"format","name":"format","type":"COMBO","widget":{"name":"format"},"link":null},{"localized_name":"codec","name":"codec","type":"COMFY_DYNAMICCOMBO_V3","widget":{"name":"codec"},"link":null}],"outputs":[{"localized_name":"video","name":"video","type":"VIDEO","links":null}],"title":"Save INT8 ref2v 832x480 124f","properties":{"Node name for S&R":"SaveVideo"},"widgets_values":["video/h3_int8_vaemp_832x480_124f_1step","auto","auto"]},{"id":10,"type":"RandomNoise","pos":[1158.8193624557262,471.2514757969303],"size":[320,82],"flags":{},"order":7,"mode":0,"inputs":[{"localized_name":"noise_seed","name":"noise_seed","type":"INT","widget":{"name":"noise_seed"},"link":null}],"outputs":[{"localized_name":"NOISE","name":"NOISE","type":"NOISE","links":[11]}],"title":"Keep seed fixed when comparing modes","properties":{"Node name for S&R":"RandomNoise"},"widgets_values":[956896857621717,"randomize"]},{"id":900,"type":"Note","pos":[594.7663518299883,893.4269185360108],"size":[560,300],"flags":{},"order":8,"mode":2,"inputs":[],"outputs":[],"title":"使用说明 · 832x480 · 124f","properties":{},"widgets_values":["当前：参考图模式 · 832x480 · 124帧 · 1步\n\n【参考图】节点 17 接入节点 6 的 reference_image；保持 mode=reference_image。\n节点 18/19 仅供 first_last_frames 模式，当前不会求值。\n\n【模型】DiT 使用 INT8 ConvRot 双卡 TP；Qwen32 使用 layer-MP。\n【VAE】视频 VAE 使用 INT8 ConvRot 双卡 layer-MP，decoder 在 DiT 采样后延迟加载；音频 VAE 必须 FP32。\n启动脚本必须保持 H3_ASYNC_VAE_LOAD=1、H3_ASYNC_VAE_PREFETCH_MIB=0,0、H3_NODE_CACHE=none。\n本 workflow 使用 MiniMaxH3Int8StaticLoader，避免原生 UNETLoader 的 DynamicVRAM staging。\n\n【输出】视频保存到 ComfyUI output/video，latent 同时保存用于复现。"],"color":"#432","bgcolor":"#653"},{"id":20,"type":"SaveMiniMaxH3Latent","pos":[2360.7105291402827,753.890737361811],"size":[360,100],"flags":{},"order":19,"mode":2,"inputs":[{"localized_name":"samples","name":"samples","type":"LATENT","link":23},{"localized_name":"filename","name":"filename","type":"STRING","widget":{"name":"filename"},"link":null}],"outputs":[],"title":"Save AV latent","properties":{"Node name for S&R":"SaveMiniMaxH3Latent"},"widgets_values":["./output/h3_int8_vaemp_832x480_124f_1step_latent.pt"]},{"id":17,"type":"LoadImage","pos":[42.38345085008547,862.0548681562275],"size":[420,314],"flags":{},"order":9,"mode":0,"inputs":[{"localized_name":"image","name":"image","type":"COMBO","widget":{"name":"image"},"link":null},{"localized_name":"choose file to upload","name":"upload","type":"IMAGEUPLOAD","widget":{"name":"upload"},"link":null}],"outputs":[{"localized_name":"IMAGE","name":"IMAGE","type":"IMAGE","links":[20,27]},{"localized_name":"MASK","name":"MASK","type":"MASK","links":null}],"title":"Reference image (used when mode = reference_image)","properties":{"Node name for S&R":"LoadImage"},"widgets_values":["Screenshot From 2026-08-30 02-24-38.png","image"]},{"id":22,"type":"Qwen32BQ2MPCLIPLoader","pos":[-13.428571428571429,367.77256627669857],"size":[500,150],"flags":{},"order":10,"mode":0,"inputs":[{"localized_name":"runtime","name":"runtime","type":"H3_TP_RUNTIME","link":25},{"localized_name":"residency","name":"residency","type":"COMBO","widget":{"name":"residency"},"link":null},{"localized_name":"keep_layers","name":"keep_layers","type":"INT","widget":{"name":"keep_layers"},"link":null},{"localized_name":"cache_dequantized","name":"cache_dequantized","type":"BOOLEAN","widget":{"name":"cache_dequantized"},"link":null}],"outputs":[{"localized_name":"clip","name":"clip","type":"CLIP","links":[26]}],"title":"Qwen32 Q2 layer-MP CLIP (evict)","properties":{"Node name for S&R":"Qwen32BQ2MPCLIPLoader"},"widgets_values":["evict",0,false]},{"id":6,"type":"MiniMaxH3ReferenceKeyframeToVideoTP","pos":[554.1676505312865,38.8193624557261],"size":[560,500],"flags":{},"order":12,"mode":0,"inputs":[{"localized_name":"clip","name":"clip","type":"CLIP","link":26},{"localized_name":"vae","name":"vae","type":"VAE","link":3},{"localized_name":"reference_image","name":"reference_image","shape":7,"type":"IMAGE","link":20},{"localized_name":"first_frame","name":"first_frame","shape":7,"type":"IMAGE","link":27},{"localized_name":"last_frame","name":"last_frame","shape":7,"type":"IMAGE","link":22},{"localized_name":"mode","name":"mode","type":"COMBO","widget":{"name":"mode"},"link":null},{"localized_name":"prompt","name":"prompt","type":"STRING","widget":{"name":"prompt"},"link":null},{"localized_name":"width","name":"width","type":"INT","widget":{"name":"width"},"link":null},{"localized_name":"height","name":"height","type":"INT","widget":{"name":"height"},"link":null},{"localized_name":"length","name":"length","type":"INT","widget":{"name":"length"},"link":null},{"localized_name":"ref_image_size","name":"ref_image_size","type":"COMBO","widget":{"name":"ref_image_size"},"link":null}],"outputs":[{"localized_name":"positive","name":"positive","type":"CONDITIONING","links":[6]},{"localized_name":"latent","name":"latent","type":"LATENT","links":[7]}],"title":"MODE: reference image · 832x480 · 124 frames","properties":{"Node name for S&R":"MiniMaxH3ReferenceKeyframeToVideoTP"},"widgets_values":["first_last_frames","For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] 2D anime animation, single continuous shot, 15 seconds.\n\nAt exactly 0.00 seconds, begin from <Picture 1>. Preserve the character, face, facial expression, gaze, eyelid position, eyebrows, mouth, hairstyle, cat ears, clothing, hand position, cigarette, body posture, framing, background, table lamp, lighting, shadows, and overall visual style established by <Picture 1>. Do not redesign or reinterpret the character.\n\nThroughout the entire shot, keep her overall appearance and resting facial expression visually consistent with <Picture 1>. Her head, shoulders, torso, hair, and cat ears remain almost completely still. Her gaze stays directed toward the camera with the same relaxed, low-energy expression.\n\nKeep the mouth visually consistent with <Picture 1>, using only minimal natural movement when necessary for inhaling, exhaling, and speaking.\n\nBeginning shortly after the first frame, the camera slowly pulls backward with very small amplitude at a very slow and constant speed. The motion continues smoothly throughout most of the fifteen-second shot, gradually revealing slightly more of her upper body and the dim room while preserving the original camera angle, perspective, proportions, lighting, and spatial relationships.\n\nFrom approximately 00:01.000 to 00:05.000, her cigarette hand moves slowly and casually toward her mouth. Only her fingers, wrist, and forearm move noticeably. The rest of her posture and facial expression remain unchanged. The movement is unhurried, smooth, and minimal.\n\nAt approximately 00:05.000, the cigarette reaches her lips. She takes one slow, long drag lasting about two seconds. The cigarette ember gradually glows brighter during the inhalation, producing a faint warm red-orange glow at the tip. A quiet inhaling sound is synchronized with the action. Her face and body remain relaxed and almost motionless.\n\nAt approximately 00:07.000, she finishes the drag and slowly lowers the cigarette several centimeters away from her mouth. Her fingers make a tiny natural adjustment around the cigarette as the hand settles beside her face. The ember gradually dims again.\n\nShe pauses briefly while holding the smoke, remaining almost perfectly still and continuing to look toward the camera with the same expression established by <Picture 1>.\n\nFrom approximately 00:08.000 to 00:10.500, she slowly exhales. A thin, soft, semi-transparent stream of cigarette smoke leaves her mouth and drifts gently forward. The smoke gradually curls upward along one side of her face, forming loose delicate strands before spreading and fading into the warm lamplight. The smoke never completely obscures her face.\n\nA quiet, sustained breathy exhalation sound is synchronized precisely with the visible smoke. It begins softly, remains smooth and continuous, then gradually fades as the stream becomes thinner.\n\nHer facial expression, gaze, eyelids, eyebrows, head position, and posture remain visually consistent with <Picture 1> throughout the inhale and exhale.\n\nAt approximately 00:10.800, after the main exhale has finished, the adult woman with a quiet, relaxed, low-energy, slightly breathy female voice (S1) continues looking toward the camera and softly says: <d>[Chinese] 要来一口吗？</d>\n\nUse restrained 2D anime facial animation during the dialogue. Keep her overall face and expression visually consistent with <Picture 1>. After speaking, her face returns naturally to the resting appearance established by <Picture 1>.\n\nFrom approximately 00:12.500 to 00:15.000, she remains almost completely still. Her cigarette hand makes only a very small, casual movement slightly toward the viewer, subtly suggesting an offer without changing her body posture. Her fingers remain relaxed.\n\nA thin thread of smoke continues to rise naturally from the cigarette tip. Residual smoke from the earlier exhale slowly curls upward and disperses through the warm light. A tiny amount of ash at the cigarette tip loosens naturally and falls downward near the end of the shot.\n\nThe camera finishes its extremely slow pull backward and holds briefly on the final composition. End with the same character identity, facial expression, gaze, hairstyle, cat ears, clothing, lighting, and overall atmosphere established by <Picture 1>.\n\nSingle continuous shot. No cuts. No scene transition. No sudden camera movement. No head tilt. No nodding. No leaning forward. No body sway. No exaggerated blinking. No eyebrow animation. No expression change. No exaggerated facial animation. No additional characters.\n\nDo not generate any watermark, logo, platform branding, channel mark, subtitle, caption, timestamp, signature, credit, user-interface element, playback controls, or other visible text anywhere in the video.\n\noverall_soundscape: Very quiet indoor nighttime ambience. A soft, slow inhalation accompanies the cigarette drag, with a faint ember crackle as the cigarette tip glows brighter. After a short pause, a gentle sustained breathy exhale is clearly audible and synchronized with the visible smoke, gradually fading as the smoke disperses. Her Chinese dialogue is quiet, relaxed, slightly breathy, and naturally paced. Very subtle fabric and finger movement accompany the slow cigarette-hand motion, followed near the end by the extremely faint sound of a small piece of ash falling.\n\nnon_diegetic_music: N/A",864,480,243,"match"]}],"links":[[2,2,0,3,0,"MODEL"],[3,4,0,6,1,"VAE"],[4,4,0,12,1,"VAE"],[5,5,0,13,1,"VAE"],[6,6,0,7,1,"CONDITIONING"],[7,6,1,11,4,"LATENT"],[8,7,0,11,1,"GUIDER"],[9,8,0,11,2,"SAMPLER"],[10,9,0,11,3,"SIGMAS"],[11,10,0,11,0,"NOISE"],[12,11,0,12,0,"LATENT"],[13,11,0,13,0,"LATENT"],[14,12,0,14,0,"IMAGE"],[15,13,0,14,1,"AUDIO"],[16,14,0,15,0,"VIDEO"],[17,3,0,16,0,"MODEL"],[18,16,0,7,0,"MODEL"],[19,16,0,9,0,"MODEL"],[20,17,0,6,2,"IMAGE"],[22,19,0,6,4,"IMAGE"],[23,11,0,20,0,"LATENT"],[24,1,0,3,1,"H3_TP_RUNTIME"],[25,1,0,22,0,"H3_TP_RUNTIME"],[26,22,0,6,0,"CLIP"],[27,17,0,6,3,"IMAGE"]],"groups":[],"config":{},"extra":{"ds":{"scale":0.7700000000000073,"offset":[342.2740168512119,202.96634248678527]},"workflow_filenames":["H3-V100-15-int8-vae-mp-ref2v-832x480-124f-1step-ui.json"]},"version":0.4}
+{
+  "id": "h3-v100-15-int8-vae-mp-832x480-124f-1step",
+  "revision": 0,
+  "last_node_id": 22,
+  "last_link_id": 26,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MiniMaxH3DualRuntimeLoader",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        500,
+        220
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "unet_name"
+          }
+        },
+        {
+          "name": "lora_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "lora_name"
+          }
+        },
+        {
+          "name": "qwen_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "qwen_name"
+          }
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "strength"
+          }
+        },
+        {
+          "name": "staging_mib",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "staging_mib"
+          }
+        },
+        {
+          "name": "chunk_rows",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "chunk_rows"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "runtime",
+          "type": "H3_TP_RUNTIME",
+          "links": [
+            24,
+            25
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3DualRuntimeLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        "qwen3vl-32B-MiniMax-H3-Q2_K.gguf",
+        1.0,
+        4,
+        2048
+      ],
+      "title": "Shared H3/Qwen32 runtime · INT8 DiT + Qwen32 MP"
+    },
+    {
+      "id": 2,
+      "type": "MiniMaxH3Int8StaticLoader",
+      "pos": [
+        40,
+        250
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "unet_name"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3Int8StaticLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "MiniMaxH3TensorParallelInt8",
+      "pos": [
+        540,
+        570
+      ],
+      "size": [
+        500,
+        190
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 2
+        },
+        {
+          "name": "runtime",
+          "type": "H3_TP_RUNTIME",
+          "shape": 7,
+          "link": 24
+        },
+        {
+          "name": "unet_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "unet_name"
+          }
+        },
+        {
+          "name": "lora_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "lora_name"
+          }
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "strength"
+          }
+        },
+        {
+          "name": "chunk_rows",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "chunk_rows"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3TensorParallelInt8"
+      },
+      "widgets_values": [
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        1,
+        2048
+      ],
+      "title": "DiT INT8 ConvRot persistent 2-way TP"
+    },
+    {
+      "id": 4,
+      "type": "VAELoaderH3Device",
+      "pos": [
+        40,
+        560
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "vae_name"
+          }
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "device"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            3,
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoaderH3Device"
+      },
+      "widgets_values": [
+        "minimax_h3_video_vae_int8_convrot.safetensors",
+        "cuda:0"
+      ],
+      "title": "Video VAE INT8 ConvRot · deferred decoder dual-card MP"
+    },
+    {
+      "id": 5,
+      "type": "VAELoaderH3Device",
+      "pos": [
+        40,
+        700
+      ],
+      "size": [
+        420,
+        100
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "vae_name"
+          }
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "device"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoaderH3Device"
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors",
+        "cuda:0"
+      ],
+      "title": "Audio VAE"
+    },
+    {
+      "id": 6,
+      "type": "MiniMaxH3ReferenceKeyframeToVideoTP",
+      "pos": [
+        540,
+        40
+      ],
+      "size": [
+        560,
+        500
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mode",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "mode"
+          }
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 26
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "prompt"
+          }
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "width"
+          }
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "height"
+          }
+        },
+        {
+          "name": "length",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "length"
+          }
+        },
+        {
+          "name": "ref_image_size",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "ref_image_size"
+          }
+        },
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 20,
+          "shape": 7
+        },
+        {
+          "name": "first_frame",
+          "type": "IMAGE",
+          "link": 21,
+          "shape": 7
+        },
+        {
+          "name": "last_frame",
+          "type": "IMAGE",
+          "link": 22,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            6
+          ]
+        },
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ReferenceKeyframeToVideoTP"
+      },
+      "widgets_values": [
+        "reference_image",
+        "Use <Picture 1> as the persistent visual identity and composition reference. Preserve the subject's identity, colors, materials, and key visual details while generating a natural continuous action with coherent camera motion, stable anatomy, realistic lighting and sound, no text.",
+        832,
+        480,
+        124,
+        "match"
+      ],
+      "title": "MODE: reference image · 832x480 · 124 frames"
+    },
+    {
+      "id": 7,
+      "type": "BasicGuider",
+      "pos": [
+        1160,
+        40
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 18
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "GUIDER",
+          "type": "GUIDER",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicGuider"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 8,
+      "type": "MiniMaxH3TurboSampler",
+      "pos": [
+        1160,
+        330
+      ],
+      "size": [
+        320,
+        80
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "SAMPLER",
+          "type": "SAMPLER",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3TurboSampler"
+      },
+      "widgets_values": [],
+      "title": "H3 Turbo 4-step sampler"
+    },
+    {
+      "id": 9,
+      "type": "BasicScheduler",
+      "pos": [
+        1160,
+        170
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 19
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "scheduler"
+          }
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "steps"
+          }
+        },
+        {
+          "name": "denoise",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "denoise"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            10
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        1,
+        1
+      ],
+      "title": "BasicScheduler · 1 step · 832x480 124f"
+    },
+    {
+      "id": 10,
+      "type": "RandomNoise",
+      "pos": [
+        1160,
+        450
+      ],
+      "size": [
+        320,
+        80
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise_seed",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "noise_seed"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RandomNoise"
+      },
+      "widgets_values": [
+        2009,
+        "fixed"
+      ],
+      "title": "Keep seed fixed when comparing modes"
+    },
+    {
+      "id": 11,
+      "type": "SamplerCustomAdvanced",
+      "pos": [
+        1540,
+        40
+      ],
+      "size": [
+        360,
+        220
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 11
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 8
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 9
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 10
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            12,
+            13,
+            23
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SamplerCustomAdvanced"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 12,
+      "type": "VAEDecode",
+      "pos": [
+        1960,
+        40
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 12
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 13,
+      "type": "VAEDecodeAudio",
+      "pos": [
+        1960,
+        170
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 13
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecodeAudio"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 14,
+      "type": "CreateVideo",
+      "pos": [
+        2340,
+        40
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 14
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 15
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "fps"
+          }
+        },
+        {
+          "name": "bit_depth",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "bit_depth"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        24,
+        8
+      ]
+    },
+    {
+      "id": 15,
+      "type": "SaveVideo",
+      "pos": [
+        2340,
+        220
+      ],
+      "size": [
+        360,
+        120
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 16
+        },
+        {
+          "name": "filename_prefix",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "filename_prefix"
+          }
+        },
+        {
+          "name": "format",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "format"
+          }
+        },
+        {
+          "name": "codec",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "codec"
+          }
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/h3_int8_vaemp_832x480_124f_1step",
+        "auto",
+        "auto"
+      ],
+      "title": "Save INT8 ref2v 832x480 124f"
+    },
+    {
+      "id": 16,
+      "type": "MiniMaxH3TurboLoRA",
+      "pos": [
+        1160,
+        570
+      ],
+      "size": [
+        420,
+        150
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        },
+        {
+          "name": "lora_name",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "lora_name"
+          }
+        },
+        {
+          "name": "strength",
+          "type": "FLOAT",
+          "link": null,
+          "widget": {
+            "name": "strength"
+          }
+        },
+        {
+          "name": "low_vram",
+          "type": "BOOLEAN",
+          "link": null,
+          "widget": {
+            "name": "low_vram"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            18,
+            19
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3TurboLoRA"
+      },
+      "widgets_values": [
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        1,
+        false
+      ],
+      "title": "Turbo LoRA (persistent TP; keep bypass off for quality)"
+    },
+    {
+      "id": 17,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        870
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "image"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            20
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "Reference image (used when mode = reference_image)"
+    },
+    {
+      "id": 18,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        990
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "image"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            21
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "First frame (used when mode = first_last_frames)"
+    },
+    {
+      "id": 19,
+      "type": "LoadImage",
+      "pos": [
+        40,
+        1110
+      ],
+      "size": [
+        420,
+        80
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "image"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            22
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ],
+      "title": "Optional last frame (same geometry transform as first frame)"
+    },
+    {
+      "id": 20,
+      "type": "SaveMiniMaxH3Latent",
+      "pos": [
+        2340,
+        390
+      ],
+      "size": [
+        360,
+        100
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 23
+        },
+        {
+          "name": "filename",
+          "type": "STRING",
+          "link": null,
+          "widget": {
+            "name": "filename"
+          }
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveMiniMaxH3Latent"
+      },
+      "widgets_values": [
+        "./output/h3_int8_vaemp_832x480_124f_1step_latent.pt"
+      ],
+      "title": "Save AV latent"
+    },
+    {
+      "id": 22,
+      "type": "Qwen32BQ2MPCLIPLoader",
+      "pos": [
+        40,
+        380
+      ],
+      "size": [
+        500,
+        150
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "runtime",
+          "type": "H3_TP_RUNTIME",
+          "link": 25
+        },
+        {
+          "name": "residency",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "residency"
+          }
+        },
+        {
+          "name": "keep_layers",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "keep_layers"
+          }
+        },
+        {
+          "name": "cache_dequantized",
+          "type": "BOOLEAN",
+          "link": null,
+          "widget": {
+            "name": "cache_dequantized"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            26
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "Qwen32BQ2MPCLIPLoader"
+      },
+      "widgets_values": [
+        "evict",
+        0,
+        false
+      ],
+      "title": "Qwen32 Q2 layer-MP CLIP (evict)"
+    },
+    {
+      "id": 900,
+      "type": "Note",
+      "pos": [
+        540,
+        1120
+      ],
+      "size": [
+        560,
+        300
+      ],
+      "flags": {},
+      "order": 99,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "使用说明 · 832x480 · 124f",
+      "properties": {},
+      "widgets_values": [
+        "当前：参考图模式 · 832x480 · 124帧 · 1步\n\n【参考图】节点 17 接入节点 6 的 reference_image；保持 mode=reference_image。\n节点 18/19 仅供 first_last_frames 模式，当前不会求值。\n\n【模型】DiT 使用 INT8 ConvRot 双卡 TP；Qwen32 使用 layer-MP。\n【VAE】视频 VAE 使用 INT8 ConvRot 双卡 layer-MP，decoder 在 DiT 采样后延迟加载；音频 VAE 必须 FP32。\n启动脚本必须保持 H3_ASYNC_VAE_LOAD=1、H3_ASYNC_VAE_PREFETCH_MIB=0,0、H3_NODE_CACHE=none。\n本 workflow 使用 MiniMaxH3Int8StaticLoader，避免原生 UNETLoader 的 DynamicVRAM staging。\n\n【输出】视频保存到 ComfyUI output/video，latent 同时保存用于复现。"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "MODEL"
+    ],
+    [
+      3,
+      4,
+      0,
+      6,
+      2,
+      "VAE"
+    ],
+    [
+      4,
+      4,
+      0,
+      12,
+      1,
+      "VAE"
+    ],
+    [
+      5,
+      5,
+      0,
+      13,
+      1,
+      "VAE"
+    ],
+    [
+      6,
+      6,
+      0,
+      7,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      7,
+      6,
+      1,
+      11,
+      4,
+      "LATENT"
+    ],
+    [
+      8,
+      7,
+      0,
+      11,
+      1,
+      "GUIDER"
+    ],
+    [
+      9,
+      8,
+      0,
+      11,
+      2,
+      "SAMPLER"
+    ],
+    [
+      10,
+      9,
+      0,
+      11,
+      3,
+      "SIGMAS"
+    ],
+    [
+      11,
+      10,
+      0,
+      11,
+      0,
+      "NOISE"
+    ],
+    [
+      12,
+      11,
+      0,
+      12,
+      0,
+      "LATENT"
+    ],
+    [
+      13,
+      11,
+      0,
+      13,
+      0,
+      "LATENT"
+    ],
+    [
+      14,
+      12,
+      0,
+      14,
+      0,
+      "IMAGE"
+    ],
+    [
+      15,
+      13,
+      0,
+      14,
+      1,
+      "AUDIO"
+    ],
+    [
+      16,
+      14,
+      0,
+      15,
+      0,
+      "VIDEO"
+    ],
+    [
+      17,
+      3,
+      0,
+      16,
+      0,
+      "MODEL"
+    ],
+    [
+      18,
+      16,
+      0,
+      7,
+      0,
+      "MODEL"
+    ],
+    [
+      19,
+      16,
+      0,
+      9,
+      0,
+      "MODEL"
+    ],
+    [
+      20,
+      17,
+      0,
+      6,
+      8,
+      "IMAGE"
+    ],
+    [
+      21,
+      18,
+      0,
+      6,
+      9,
+      "IMAGE"
+    ],
+    [
+      22,
+      19,
+      0,
+      6,
+      10,
+      "IMAGE"
+    ],
+    [
+      23,
+      11,
+      0,
+      20,
+      0,
+      "LATENT"
+    ],
+    [
+      24,
+      1,
+      0,
+      3,
+      1,
+      "H3_TP_RUNTIME"
+    ],
+    [
+      25,
+      1,
+      0,
+      22,
+      0,
+      "H3_TP_RUNTIME"
+    ],
+    [
+      26,
+      22,
+      0,
+      6,
+      1,
+      "CLIP"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [
+        0,
+        0
+      ]
+    },
+    "workflow_filenames": [
+      "H3-V100-15-int8-vae-mp-ref2v-832x480-124f-1step-ui.json"
+    ]
+  },
+  "version": 0.4
+}

@@ -95,7 +95,7 @@ export H3_MODEL_DIR=/mnt/ssd/minimax-h3/models
 浏览器打开 <http://127.0.0.1:8188>。脚本默认启用：
 
 - Qwen32 Q2 双卡 layer-MP；
-- INT8 ConvRot online 路径和 Q-only compact SDPA；
+- INT8 ConvRot online 路径和 all-QKV compact SDPA（为 720p 长序列释放 fused QKV）；
 - 异步 VAE，decoder 在 DiT 后加载；
 - VAE `18/18` layer split、FP16 host canvas；
 - `--cache-none`、禁用 pinned memory 和异步 offload。
@@ -158,7 +158,7 @@ MiniMaxH3Int8StaticLoader
 - 首尾帧，832×480、124 帧、1 step：E2E `175.62 s`（含冷加载），输出 H.264，
   分辨率和帧数经 ffprobe 验证。
 - 参考图，1280×720、243 帧、1 step：成功输出 H.264 MP4；decoder 在 DiT 后加载。
-- 720p、243 帧、4 step：成功出片；DiT 峰值之后每卡释放约 4.3 GiB reserved VRAM，
+- 720p、243 帧、1 step reference-image：成功出片（1280×720、243 帧）；DiT 峰值之后每卡释放约 4.3 GiB reserved VRAM，
   再加载 decoder。
 - 连续请求可复用 static skeleton 和持久 DiT TP，不创建第二份 DiT。
 - Qwen32 两轮 layer-MP：无预取 `29.292 / 20.937 s`，默认 4 MiB staging 预取
@@ -176,6 +176,8 @@ all-reduce 中等待，日志中的 `NCCL=70s` 可能主要是负载失衡而非
 
 - 保持 `H3_NO_HOST_MMAP=1`；不要恢复完整模型 mmap 或 CPU 权重副本。
 - 720p 路线保持 `H3_ASYNC_VAE_PREFETCH_MIB=0,0`，避免 decoder 预取占用 DiT 峰值余量。
+- 720p 长序列保持 `H3_TP_COMPACT_QKV=all`；Q-only 会把 fused QKV 留到 SDPA，
+  在 16 GiB V100 上可能于首个 block OOM。短序列可显式设为 `q` 做 A/B。
 - 保持 `H3_ASYNC_VAE_OUTPUT_DTYPE=fp16`。720p/243f FP32 canvas 约 2.56 GiB，FP16
   约 1.28 GiB。
 - 保持 `--cache-none`，避免长视频 IMAGE 节点被 RAM cache 长期持有。

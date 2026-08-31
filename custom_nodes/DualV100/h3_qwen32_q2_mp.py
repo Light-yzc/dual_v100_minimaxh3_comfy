@@ -46,7 +46,53 @@ DEFAULT_MP_SAFETY_FRACTION = 0.86
 MIB = qwen.MIB
 QWEN32_MP_PREFETCH_ENV = "H3_QWEN32_MP_PREFETCH"
 QWEN32_MP_PREFETCH_ALIAS_ENV = "H3_QWEN32_PREFETCH"
+QWEN32_MP_PREFETCH_CUDA_STREAM_ENV = "H3_QWEN32_MP_PREFETCH_CUDA_STREAM"
 DEFAULT_MP_PREFETCH_MAX_MIB = 256
+QWEN32_FINITE_TRACE_ENV = "H3_QWEN32_FINITE_TRACE"
+
+
+def _finite_trace_enabled() -> bool:
+    """Return whether expensive per-op numerical diagnostics are enabled.
+
+    The checks synchronize CUDA streams, so they are deliberately opt-in and
+    only used while investigating a failed conditioning request.
+    """
+
+    value = os.environ.get(QWEN32_FINITE_TRACE_ENV, "0").strip().lower()
+    return value in {"1", "true", "yes", "on", "enable", "enabled"}
+
+
+def _trace_tensor_finite(label: str, value: Any) -> bool:
+    """Log a compact finite/range report for one Qwen intermediate."""
+
+    if not torch.is_tensor(value):
+        logging.error("[H3 Qwen finite] %s is %s, expected tensor", label, type(value).__name__)
+        return False
+    finite = torch.isfinite(value)
+    finite_count = int(finite.sum().item())
+    total = int(value.numel())
+    if finite_count:
+        finite_values = value.masked_select(finite)
+        minimum = float(finite_values.min().item())
+        maximum = float(finite_values.max().item())
+        del finite_values
+    else:
+        minimum = maximum = float("nan")
+    ok = finite_count == total
+    logging.error(
+        "[H3 Qwen finite] %s: finite=%s nonfinite=%d/%d min=%+.6e max=%+.6e "
+        "shape=%s dtype=%s device=%s",
+        label,
+        ok,
+        total - finite_count,
+        total,
+        minimum,
+        maximum,
+        tuple(value.shape),
+        value.dtype,
+        value.device,
+    )
+    return ok
 
 
 def _dtype_element_size(dtype: torch.dtype) -> int:
@@ -89,6 +135,20 @@ def _prefetch_from_env(default: bool = False) -> bool:
         default,
         alias=QWEN32_MP_PREFETCH_ALIAS_ENV,
     )
+
+
+def _prefetch_cuda_stream_from_env(default: bool = False) -> bool:
+    """Whether the experimental reader may allocate on an auxiliary stream.
+
+    V100 + PyTorch's caching allocator has shown intermittent use-after-reuse
+    when a layer allocated on a worker stream is handed to the compute stream,
+    even with an event dependency and ``record_stream``.  The safe default is
+    synchronous CUDA copies (the SSD read still runs in the worker); an
+    auxiliary stream remains an explicit opt-in for future driver/allocator
+    combinations that have passed the numerical gate.
+    """
+
+    return _env_bool(QWEN32_MP_PREFETCH_CUDA_STREAM_ENV, default)
 
 
 def normalize_mp_devices(
@@ -667,6 +727,7 @@ class Qwen32Q2MPLayerBlock(nn.Module):
         self.last_timing: dict[str, float] = {}
         self.last_stats: dict[str, Any] = {}
         self._prefetch_ready_event: torch.cuda.Event | None = None
+        self._prefetch_consumer_stream: torch.cuda.Stream | None = None
 
     @property
     def resident_bytes(self) -> int:
@@ -700,6 +761,42 @@ class Qwen32Q2MPLayerBlock(nn.Module):
         freqs_cis: Any = None,
     ) -> torch.Tensor:
         started = time.perf_counter()
+        # A prefetch worker copies compressed matrices and dequantises the
+        # small RMSNorm vectors on its own CUDA stream.  ``consume()`` also
+        # queues a wait, but the compute stream is not guaranteed to remain
+        # the same between layer hand-offs (ComfyUI and attention backends
+        # may change the current stream).  Every layer must therefore enforce
+        # its dependency at the point where the payload is first consumed.
+        # ``wait_event`` is stream-local and does not synchronize the device;
+        # falling back to a device-wide sync here would erase the overlap that
+        # prefetch is intended to provide.
+        ready_event = self._prefetch_ready_event
+        if (
+            ready_event is not None
+            and self.device.type == "cuda"
+            and torch.cuda.is_available()
+        ):
+            with torch.cuda.device(self.device):
+                compute_stream = torch.cuda.current_stream(self.device)
+                compute_stream.wait_event(ready_event)
+                self._prefetch_consumer_stream = compute_stream
+                # The payload was allocated on the worker's copy stream but
+                # is consumed (and later released) on this compute stream.
+                # Waiting on the event orders the kernels; record_stream is
+                # the separate allocator-lifetime requirement.  Without it,
+                # evict-mode cleanup can return a raw layer buffer to the
+                # caching allocator while a queued dequant/GEMM still reads
+                # it.  The resulting use-after-reuse is timing-dependent and
+                # showed up as NaN/Inf at larger sequence lengths.  Register
+                # every cross-stream tensor before the first matrix use.
+                for matrix in self.matrices.values():
+                    if matrix.raw is not None:
+                        matrix.raw.record_stream(compute_stream)
+                for value in self.norms.values():
+                    value.record_stream(compute_stream)
+        trace = _finite_trace_enabled()
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.input", x)
         before = {
             "load": sum(float(item.load_seconds) for item in self.matrices.values()),
             "dequant": sum(float(item.dequant_seconds) for item in self.matrices.values()),
@@ -715,14 +812,23 @@ class Qwen32Q2MPLayerBlock(nn.Module):
             )
         b, sequence, _ = x.shape
         h = qwen._rms_norm(x, self.norms["input_layernorm"], self.eps)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.input_layernorm", h)
         q_value = self.matrices["q_proj"](h)
         k_value = self.matrices["k_proj"](h)
         v_value = self.matrices["v_proj"](h)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.q_proj", q_value)
+            _trace_tensor_finite(f"layer{self.layer}.k_proj", k_value)
+            _trace_tensor_finite(f"layer{self.layer}.v_proj", v_value)
         q_value = q_value.view(b, sequence, qwen.QWEN32_NUM_HEADS, qwen.QWEN32_HEAD_DIM).transpose(1, 2)
         k_value = k_value.view(b, sequence, qwen.QWEN32_NUM_KV_HEADS, qwen.QWEN32_HEAD_DIM).transpose(1, 2)
         v_value = v_value.view(b, sequence, qwen.QWEN32_NUM_KV_HEADS, qwen.QWEN32_HEAD_DIM).transpose(1, 2)
         q_value = qwen._rms_norm(q_value, self.norms["q_norm"], self.eps)
         k_value = qwen._rms_norm(k_value, self.norms["k_norm"], self.eps)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.q_norm", q_value)
+            _trace_tensor_finite(f"layer{self.layer}.k_norm", k_value)
         try:
             from comfy.text_encoders.llama import apply_rope
         except (ImportError, ModuleNotFoundError):  # pragma: no cover - CPU contract path
@@ -731,21 +837,43 @@ class Qwen32Q2MPLayerBlock(nn.Module):
             q_value, k_value = apply_rope(q_value, k_value, freqs_cis)
         elif freqs_cis is not None:
             q_value, k_value = qwen._apply_rope_fallback(q_value, k_value, freqs_cis)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.q_rope", q_value)
+            _trace_tensor_finite(f"layer{self.layer}.k_rope", k_value)
         attention = qwen._attention(q_value, k_value, v_value, attention_mask)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.attention", attention)
         if attention.ndim != 4:
             raise RuntimeError(
                 f"Qwen attention backend returned {tuple(attention.shape)}; expected [B,H,S,D]"
             )
         attention = attention.transpose(1, 2).reshape(b, sequence, qwen.QWEN32_Q_DIM)
         residual = x
-        x = residual + self.matrices["o_proj"](attention)
+        o_value = self.matrices["o_proj"](attention)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.o_proj", o_value)
+        x = residual + o_value
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.attention_residual", x)
 
         residual = x
         h = qwen._rms_norm(x, self.norms["post_attention_layernorm"], self.eps)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.post_attention_layernorm", h)
         gate = self.matrices["gate_proj"](h)
         up = self.matrices["up_proj"](h)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.gate_proj", gate)
+            _trace_tensor_finite(f"layer{self.layer}.up_proj", up)
         mlp = F.silu(gate) * up
-        x = residual + self.matrices["down_proj"](mlp)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.mlp", mlp)
+        down = self.matrices["down_proj"](mlp)
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.down_proj", down)
+        x = residual + down
+        if trace:
+            _trace_tensor_finite(f"layer{self.layer}.output", x)
         self.forward_count += 1
         self.forward_seconds += time.perf_counter() - started
         after = {
@@ -780,8 +908,19 @@ class Qwen32Q2MPLayerBlock(nn.Module):
 
         ready_event = self._prefetch_ready_event
         self._prefetch_ready_event = None
+        consumer_stream = self._prefetch_consumer_stream
+        self._prefetch_consumer_stream = None
         if ready_event is not None:
             ready_event.synchronize()
+        if consumer_stream is not None:
+            # ``record_stream`` prevents premature allocator reuse, but a
+            # stream-local synchronization is still required before dropping
+            # the last Python references: CUDA work queued by F.linear may
+            # outlive the block call, and the next prefetch allocation can
+            # otherwise race that read on V100's caching allocator.  This is
+            # paid only by the opt-in prefetch route and still overlaps SSD
+            # reads for the next layer with the current layer's compute.
+            consumer_stream.synchronize()
         for matrix in self.matrices.values():
             matrix.clear()
         self.norms.clear()
@@ -823,9 +962,15 @@ class _Qwen32MPLayerPrefetcher:
         backbone: "Qwen32Q2LayerMPBackbone",
         *,
         max_bytes: int = DEFAULT_MP_PREFETCH_MAX_MIB * MIB,
+        use_cuda_stream: bool | None = None,
     ) -> None:
         self.backbone = backbone
         self.max_bytes = max(0, int(max_bytes))
+        self.use_cuda_stream = (
+            _prefetch_cuda_stream_from_env(False)
+            if use_cuda_stream is None
+            else bool(use_cuda_stream)
+        )
         self.executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="h3-qwen-prefetch",
@@ -850,7 +995,11 @@ class _Qwen32MPLayerPrefetcher:
         self.closed = False
 
     def _stream_for(self, device: torch.device) -> torch.cuda.Stream | None:
-        if device.type != "cuda" or not torch.cuda.is_available():
+        if (
+            not self.use_cuda_stream
+            or device.type != "cuda"
+            or not torch.cuda.is_available()
+        ):
             return None
         key = str(device)
         stream = self._streams.get(key)
@@ -944,6 +1093,13 @@ class _Qwen32MPLayerPrefetcher:
                     with torch.cuda.stream(stream):
                         ready_event = torch.cuda.Event()
                         ready_event.record(stream)
+                elif device.type == "cuda" and torch.cuda.is_available():
+                    # With synchronous copies the small norm dequantisation
+                    # can still be queued on the worker thread's current
+                    # stream.  Join that stream before publishing the layer;
+                    # this is local to the worker and avoids exposing an
+                    # unfinished norm tensor to the compute path.
+                    torch.cuda.current_stream(device).synchronize()
             elapsed = time.perf_counter() - started
             return _PrefetchedLayer(
                 layer=int(layer),
@@ -1059,6 +1215,7 @@ class _Qwen32MPLayerPrefetcher:
         return {
             "enabled": True,
             "max_bytes": int(self.max_bytes),
+            "cuda_stream": bool(self.use_cuda_stream),
             "submitted": int(self.submitted),
             "completed": int(self.completed),
             "consumed": int(self.consumed),
@@ -1401,6 +1558,8 @@ class Qwen32Q2LayerMPBackbone(nn.Module):
             visual_mask = visual_pos_masks
             deepstack = deepstack_embeds
             started = time.perf_counter()
+            first_nonfinite_layer: int | None = None
+            first_nonfinite_device: torch.device | None = None
             first_target = self._owner(requested[0])
             # Callers normally assemble Qwen inputs on the first GPU, but the
             # backend is also usable as a standalone adapter.  Normalize all
@@ -1410,6 +1569,20 @@ class Qwen32Q2LayerMPBackbone(nn.Module):
             freqs = _move_tree(freqs, first_target)
             visual_mask = _move_tree(visual_mask, first_target)
             deepstack = _move_tree(deepstack, first_target)
+            if _finite_trace_enabled():
+                _trace_tensor_finite("forward.hidden", current)
+                if torch.is_tensor(mask):
+                    _trace_tensor_finite("forward.attention_mask", mask)
+                if torch.is_tensor(visual_mask):
+                    _trace_tensor_finite("forward.visual_mask", visual_mask)
+                if isinstance(freqs, (tuple, list)):
+                    for index, item in enumerate(freqs):
+                        if torch.is_tensor(item):
+                            _trace_tensor_finite(f"forward.freqs.{index}", item)
+                if isinstance(deepstack, (tuple, list)):
+                    for index, item in enumerate(deepstack):
+                        if torch.is_tensor(item):
+                            _trace_tensor_finite(f"forward.deepstack.{index}", item)
             prefetcher = self._prefetcher
             for position, layer in enumerate(requested):
                 target = self._owner(layer)
@@ -1453,6 +1626,22 @@ class Qwen32Q2LayerMPBackbone(nn.Module):
                     attention_mask=mask,
                     freqs_cis=freqs,
                 )
+                # Qwen32Q2MPLayerBlock already performs this finite reduction
+                # for its per-layer stats.  Preserve the first failing layer
+                # so a request error identifies the actual numerical boundary
+                # instead of reporting only the final aggregate output.
+                if first_nonfinite_layer is None and not bool(
+                    getattr(block, "last_stats", {}).get("finite", True)
+                ):
+                    first_nonfinite_layer = int(layer)
+                    first_nonfinite_device = target
+                    logging.error(
+                        "[H3 Qwen MP] first non-finite layer=%d device=%s "
+                        "shape=%s; subsequent layers are not numerically usable",
+                        layer,
+                        target,
+                        tuple(current.shape),
+                    )
                 timing = getattr(block, "last_timing", {})
                 self.matrix_load_seconds += float(
                     timing.get("matrix_load_seconds", 0.0)
@@ -1478,6 +1667,10 @@ class Qwen32Q2LayerMPBackbone(nn.Module):
                         device=current.device,
                         dtype=current.dtype,
                     )
+                    if _finite_trace_enabled():
+                        _trace_tensor_finite(
+                            f"layer{layer}.after_deepstack", current
+                        )
                 if after_layer is not None:
                     replacement = after_layer(layer, current)
                     if replacement is not None:
@@ -1509,8 +1702,11 @@ class Qwen32Q2LayerMPBackbone(nn.Module):
             self.forward_count += 1
             self.layer_forward_seconds += time.perf_counter() - started
             self.state = "DIT_READY" if self.residency == "evict" else "ENCODING"
-            if not bool(torch.isfinite(current).all().item()):
-                raise RuntimeError("Qwen32 MP output produced NaN/Inf")
+            if first_nonfinite_layer is not None:
+                raise RuntimeError(
+                    "Qwen32 MP output produced NaN/Inf at layer "
+                    f"{first_nonfinite_layer} on {first_nonfinite_device}"
+                )
             return current
 
     forward = forward_hidden

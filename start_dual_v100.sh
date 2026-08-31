@@ -26,7 +26,10 @@ export H3_CLIPPROJ_OFFLOAD_BEFORE_DIT="${H3_CLIPPROJ_OFFLOAD_BEFORE_DIT:-1}"
 
 export H3_NO_HOST_MMAP="${H3_NO_HOST_MMAP:-1}"
 export H3_TP_INT8_CONVROT_PATH="${H3_TP_INT8_CONVROT_PATH:-online}"
-export H3_TP_COMPACT_QKV="${H3_TP_COMPACT_QKV:-q}"
+# Compact all Q/K/V views before long-sequence SDPA.  Q-only leaves the fused
+# projection alive and OOMs 720p/243f on 16 GiB V100; short 832x480 A/B runs
+# may explicitly set H3_TP_COMPACT_QKV=q.
+export H3_TP_COMPACT_QKV="${H3_TP_COMPACT_QKV:-all}"
 export H3_V100_FP32_TC="${H3_V100_FP32_TC:-1}"
 
 export H3_ASYNC_VAE_LOAD="${H3_ASYNC_VAE_LOAD:-1}"
